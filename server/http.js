@@ -17,10 +17,41 @@ const app = express();
 
 app.disable("x-powered-by");
 
+const cacheStore = {
+  fundTopics: {
+    value: null,
+    expiresAt: 0,
+    inFlight: null,
+  },
+};
+
 function sendJson(res, payload, status = 200, cacheControl = "public, max-age=120") {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.setHeader("Cache-Control", cacheControl);
   res.status(status).json(payload);
+}
+
+async function getCachedFundTopics() {
+  const now = Date.now();
+  if (cacheStore.fundTopics.value && cacheStore.fundTopics.expiresAt > now) {
+    return cacheStore.fundTopics.value;
+  }
+
+  if (cacheStore.fundTopics.inFlight) {
+    return cacheStore.fundTopics.inFlight;
+  }
+
+  cacheStore.fundTopics.inFlight = buildFundTopics()
+    .then((topics) => {
+      cacheStore.fundTopics.value = topics;
+      cacheStore.fundTopics.expiresAt = Date.now() + 15 * 60 * 1000;
+      return topics;
+    })
+    .finally(() => {
+      cacheStore.fundTopics.inFlight = null;
+    });
+
+  return cacheStore.fundTopics.inFlight;
 }
 
 app.get("/api/eastmoney/market-signals", async (_req, res) => {
@@ -52,7 +83,7 @@ app.get("/api/eastmoney/fund-categories", async (_req, res) => {
 
 app.get("/api/eastmoney/fund-topics", async (_req, res) => {
   try {
-    const topics = await buildFundTopics();
+    const topics = await getCachedFundTopics();
     sendJson(res, {
       configured: true,
       source: "天天基金主题基金公开数据",
@@ -119,4 +150,11 @@ const port = Number(process.env.PORT) || 3000;
 
 app.listen(port, "0.0.0.0", () => {
   console.log(`Market dashboard server listening on http://0.0.0.0:${port}`);
+  getCachedFundTopics()
+    .then((topics) => {
+      console.log(`Fund topics cache warmed with ${topics.length} records`);
+    })
+    .catch((error) => {
+      console.error("Fund topics warmup failed:", error?.message || error);
+    });
 });

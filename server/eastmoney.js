@@ -1,3 +1,8 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+
 function clamp(value, min = 0, max = 100) {
   return Math.max(min, Math.min(max, value));
 }
@@ -25,6 +30,32 @@ function parseJsonp(text) {
   const end = trimmed.lastIndexOf(")");
   const jsonText = start >= 0 && end > start ? trimmed.slice(start + 1, end) : trimmed;
   return JSON.parse(jsonText);
+}
+
+async function requestText(url, headers = {}) {
+  try {
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    return await response.text();
+  } catch (fetchError) {
+    const args = ["-L", "--compressed", "-sS", String(url)];
+    for (const [key, value] of Object.entries(headers)) {
+      args.push("-H", `${key}: ${value}`);
+    }
+    const curlBinary = process.platform === "win32" ? "curl.exe" : "/usr/bin/curl";
+    try {
+      const { stdout } = await execFileAsync(curlBinary, args, { maxBuffer: 20 * 1024 * 1024 });
+      return stdout;
+    } catch {
+      throw fetchError;
+    }
+  }
+}
+
+async function requestJson(url, headers = {}) {
+  return JSON.parse(await requestText(url, headers));
 }
 
 function parseEastmoneyKlines(payload) {
@@ -93,9 +124,7 @@ async function fetchEastmoneyIndex({ secid, key, name, signalName, detailName, s
     beg: "20250101",
     end: "20500101",
   }).toString();
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`东方财富 ${name} HTTP ${response.status}`);
-  const points = parseEastmoneyKlines(await response.json());
+  const points = parseEastmoneyKlines(await requestJson(url));
   if (points.length < 30) throw new Error(`${name} K 线不足`);
   const latest = points.at(-1);
   const monthAgo = points.at(-22) || points[0];
@@ -148,14 +177,10 @@ async function fetchFundCategory({ key, label, type }) {
     dx: "1",
     v: String(Date.now()),
   }).toString();
-  const response = await fetch(url, {
-    headers: {
-      Referer: "https://fund.eastmoney.com/data/fundranking.html",
-      "User-Agent": "Mozilla/5.0",
-    },
-  });
-  if (!response.ok) throw new Error(`天天基金 ${label} HTTP ${response.status}`);
-  const rows = parseRankData(await response.text());
+  const rows = parseRankData(await requestText(url, {
+    Referer: "https://fund.eastmoney.com/data/fundranking.html",
+    "User-Agent": "Mozilla/5.0",
+  }));
   if (!rows.length) throw new Error(`${label} 暂无基金排行数据`);
   const sampleRows = rows.slice(0, 30);
   const avgColumn = (index) => {
@@ -198,14 +223,10 @@ export async function buildFundCategories() {
 export async function fetchFundTopicDetail(topic) {
   const url = new URL("https://api.fund.eastmoney.com/ZTJJ/GetBKDetailInfoNew");
   url.search = new URLSearchParams({ callback: "fundTopic", tp: topic.INDEXCODE }).toString();
-  const response = await fetch(url, {
-    headers: {
-      Referer: "https://fund.eastmoney.com/ztjj/default.html",
-      "User-Agent": "Mozilla/5.0",
-    },
-  });
-  if (!response.ok) throw new Error(`主题 ${topic.INDEXNAME} HTTP ${response.status}`);
-  const payload = parseJsonp(await response.text());
+  const payload = parseJsonp(await requestText(url, {
+    Referer: "https://fund.eastmoney.com/ztjj/default.html",
+    "User-Agent": "Mozilla/5.0",
+  }));
   if (payload.ErrCode !== 0 || !payload.Data) throw new Error(`主题 ${topic.INDEXNAME} 无详情数据`);
   const data = payload.Data;
   const monthRank = Number(data.RANKM);
@@ -234,14 +255,10 @@ export async function fetchFundTopicDetail(topic) {
 export async function buildFundTopics() {
   const url = new URL("https://api.fund.eastmoney.com/ZTJJ/GetBKListByBKTypeNew");
   url.search = new URLSearchParams({ callback: "fundTopics" }).toString();
-  const response = await fetch(url, {
-    headers: {
-      Referer: "https://fund.eastmoney.com/ztjj/default.html",
-      "User-Agent": "Mozilla/5.0",
-    },
-  });
-  if (!response.ok) throw new Error(`主题列表 HTTP ${response.status}`);
-  const payload = parseJsonp(await response.text());
+  const payload = parseJsonp(await requestText(url, {
+    Referer: "https://fund.eastmoney.com/ztjj/default.html",
+    "User-Agent": "Mozilla/5.0",
+  }));
   if (payload.ErrCode !== 0 || !payload.Data) throw new Error("主题列表不可用");
   const selected = [...(payload.Data.gn || []), ...(payload.Data.hy1 || [])].filter((topic, index, list) => (
     topic.INDEXCODE && list.findIndex((item) => item.INDEXCODE === topic.INDEXCODE) === index
@@ -266,14 +283,10 @@ async function fetchTopicFunds(topicCode) {
     tp: topicCode,
     isbuy: "0",
   }).toString();
-  const response = await fetch(url, {
-    headers: {
-      Referer: "https://fund.eastmoney.com/ztjj/default.html",
-      "User-Agent": "Mozilla/5.0",
-    },
-  });
-  if (!response.ok) throw new Error(`主题基金 HTTP ${response.status}`);
-  const payload = parseJsonp(await response.text());
+  const payload = parseJsonp(await requestText(url, {
+    Referer: "https://fund.eastmoney.com/ztjj/default.html",
+    "User-Agent": "Mozilla/5.0",
+  }));
   if (payload.ErrCode !== 0 || !payload.Data) return [];
   return payload.Data.map((item) => ({
     code: item.FCODE,
@@ -299,14 +312,10 @@ async function fetchTopicStocks(topicCode) {
     pagesize: "6",
     tp: topicCode,
   }).toString();
-  const response = await fetch(url, {
-    headers: {
-      Referer: "https://fund.eastmoney.com/ztjj/default.html",
-      "User-Agent": "Mozilla/5.0",
-    },
-  });
-  if (!response.ok) throw new Error(`主题股票 HTTP ${response.status}`);
-  const payload = parseJsonp(await response.text());
+  const payload = parseJsonp(await requestText(url, {
+    Referer: "https://fund.eastmoney.com/ztjj/default.html",
+    "User-Agent": "Mozilla/5.0",
+  }));
   if (payload.ErrCode !== 0 || !payload.Data) return [];
   return payload.Data.map((item) => ({
     code: item.SCODE,
@@ -327,14 +336,10 @@ async function fetchStockTrend(stock) {
     iscr: "0",
     ndays: "1",
   }).toString();
-  const response = await fetch(url, {
-    headers: {
-      Referer: "https://quote.eastmoney.com/",
-      "User-Agent": "Mozilla/5.0",
-    },
+  const payload = await requestJson(url, {
+    Referer: "https://quote.eastmoney.com/",
+    "User-Agent": "Mozilla/5.0",
   });
-  if (!response.ok) throw new Error(`股票分时 HTTP ${response.status}`);
-  const payload = await response.json();
   const preClose = Number(payload?.data?.preClose);
   const trends = payload?.data?.trends || [];
   if (!Number.isFinite(preClose) || !trends.length) return null;
