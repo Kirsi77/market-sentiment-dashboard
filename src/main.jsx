@@ -1216,6 +1216,7 @@ function FundOnlyPage({ topics, state, refreshedAt, marketRankings, marketRankin
     rankMode === "hot" ? (b.strength || 0) - (a.strength || 0) : (b.dayChange || 0) - (a.dayChange || 0)
   ));
   const updated = topicDetail?.refreshedAt || refreshedAt || "\u6570\u636E\u52A0\u8F7D\u4E2D";
+  const activeTopic = topicDetail?.topic || sorted.find((item) => item.code === selectedTopicCode) || sorted[0];
   const selectFundInline = (fund) => {
     if (!fund?.code) return;
     setSelectedFund(fund);
@@ -1329,9 +1330,10 @@ function FundOnlyPage({ topics, state, refreshedAt, marketRankings, marketRankin
         <div>
           <h1>基金主题细分榜</h1>
           <p>更新于 {updated}，按主题强度或实时涨跌排序。</p>
+          <TopicHeroSummary topics={sorted} activeTopic={activeTopic} />
         </div>
         <div className="fund-title-aside">
-          <StrengthExplainer topic={topicDetail?.topic || sorted.find((item) => item.code === selectedTopicCode) || sorted[0]} />
+          <StrengthExplainer topic={activeTopic} />
           <MarketFundRankingCard rankings={marketRankings} state={marketRankingState} />
         </div>
       </div>
@@ -1415,6 +1417,51 @@ function StrengthExplainer({ topic }) {
         <p>按近 1 月排名百分位为主，并加入当日涨幅微调；越接近 100，代表该主题在公开主题池里越靠前。</p>
       </div>
     </aside>
+  );
+}
+
+function TopicHeroSummary({ topics, activeTopic }) {
+  const topTopic = activeTopic || topics[0];
+  const topMovers = topics.slice(0, 3);
+  const maxMove = Math.max(1, ...topMovers.map((item) => Math.abs(item.dayChange || 0)));
+  if (!topTopic) {
+    return (
+      <div className="topic-hero-summary empty">
+        <span>主题雷达</span>
+        <strong>等待公开数据</strong>
+      </div>
+    );
+  }
+
+  return (
+    <div className="topic-hero-summary">
+      <div className="topic-hero-main">
+        <span>当前榜首主题</span>
+        <div>
+          <strong>{topTopic.name}</strong>
+          <em className={(topTopic.dayChange || 0) >= 0 ? "up" : "down"}>{formatPercent(topTopic.dayChange)}</em>
+        </div>
+      </div>
+      <div className="topic-hero-metrics">
+        <span>主题强度 <b>{Number.isFinite(topTopic.strength) ? topTopic.strength.toFixed(1) : "--"}</b></span>
+        <span>近 1 月 <b>{formatPercent(topTopic.month)}</b></span>
+        <span>近 3 月 <b>{formatPercent(topTopic.quarter)}</b></span>
+      </div>
+      <div className="topic-hero-bars" aria-label="涨幅前三主题">
+        {topMovers.map((item, index) => {
+          const width = `${Math.max(10, (Math.abs(item.dayChange || 0) / maxMove) * 100)}%`;
+          const tone = (item.dayChange || 0) >= 0 ? "up" : "down";
+          return (
+            <div className="topic-hero-bar-row" key={item.code}>
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <strong>{item.name}</strong>
+              <div className="topic-hero-bar"><i className={tone} style={{ width }} /></div>
+              <em className={tone}>{formatPercent(item.dayChange)}</em>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
