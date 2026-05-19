@@ -512,6 +512,10 @@ async function fetchCandlesForRange(config) {
   return points;
 }
 
+async function fetchShanghaiCompositeQuote() {
+  return fetchFreshJson("/api/eastmoney/shanghai-composite-quote", "上证综指实时行情");
+}
+
 const eastmoneyIconMap = {
   em_hs300: BarChart3,
   em_chinext: Activity,
@@ -2099,6 +2103,7 @@ function App() {
   const [fundTopicsRefreshedAt, setFundTopicsRefreshedAt] = useState(null);
   const [fundMarketRankingState, setFundMarketRankingState] = useState("loading");
   const [fundMarketRankings, setFundMarketRankings] = useState(null);
+  const [liveQuote, setLiveQuote] = useState(null);
   const [showCompositePopover, setShowCompositePopover] = useState(false);
 
   useEffect(() => {
@@ -2129,6 +2134,27 @@ function App() {
       });
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadQuote = () => {
+      fetchShanghaiCompositeQuote()
+        .then((payload) => {
+          if (cancelled) return;
+          setLiveQuote(payload.quote || null);
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          console.warn(error);
+        });
+    };
+    loadQuote();
+    const timer = window.setInterval(loadQuote, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
     };
   }, []);
 
@@ -2307,14 +2333,20 @@ function App() {
   ));
   const latestQuoteCandle = quoteCandles.at(-1) || null;
   const previousQuoteCandle = quoteCandles.at(-2) || null;
-  const liveIndex = latestQuoteCandle?.close ?? marketModel.meta.close ?? null;
-  const liveChangePoints = latestQuoteCandle && previousQuoteCandle
+  const liveIndex = liveQuote?.close ?? latestQuoteCandle?.close ?? marketModel.meta.close ?? null;
+  const liveChangePoints = Number.isFinite(liveQuote?.change)
+    ? liveQuote.change
+    : latestQuoteCandle && previousQuoteCandle
     ? latestQuoteCandle.close - previousQuoteCandle.close
     : null;
-  const liveChangePercent = latestQuoteCandle && previousQuoteCandle && previousQuoteCandle.close
+  const liveChangePercent = Number.isFinite(liveQuote?.changePercent)
+    ? liveQuote.changePercent
+    : latestQuoteCandle && previousQuoteCandle && previousQuoteCandle.close
     ? ((latestQuoteCandle.close - previousQuoteCandle.close) / previousQuoteCandle.close) * 100
     : null;
-  const liveIndexDate = latestQuoteCandle
+  const liveIndexDate = liveQuote?.date
+    ? new Date(`${liveQuote.date}T00:00:00+08:00`).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" })
+    : latestQuoteCandle
     ? new Date(latestQuoteCandle.timestamp * 1000).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" })
     : marketModel.meta.date;
 

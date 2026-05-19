@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import {
   buildEastmoneySignals,
   fetchShanghaiCompositeDailyCandles,
+  fetchShanghaiCompositeRealtimeQuote,
   buildFundDetail,
   buildFundCategories,
   buildFundMarketRankings,
@@ -252,6 +253,15 @@ app.get("/api/eastmoney/shanghai-composite-daily", async (_req, res) => {
     sendJson(res, { configured: true, ...payload }, 200, "no-store");
   } catch (error) {
     sendJson(res, { configured: false, candles: [], error: error.message }, 500, "no-store");
+  }
+});
+
+app.get("/api/eastmoney/shanghai-composite-quote", async (_req, res) => {
+  try {
+    const quote = await fetchShanghaiCompositeRealtimeQuote();
+    sendJson(res, { configured: true, quote }, 200, "no-store");
+  } catch (error) {
+    sendJson(res, { configured: false, quote: null, error: error.message }, 500, "no-store");
   }
 });
 

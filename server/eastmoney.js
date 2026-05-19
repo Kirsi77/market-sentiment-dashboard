@@ -286,6 +286,38 @@ export async function fetchShanghaiCompositeDailyCandles() {
   };
 }
 
+export async function fetchShanghaiCompositeRealtimeQuote() {
+  const url = new URL("https://push2.eastmoney.com/api/qt/stock/get");
+  url.search = new URLSearchParams({
+    secid: "1.000001",
+    fields: "f43,f44,f45,f46,f47,f48,f57,f58,f59,f60,f86,f169,f170",
+  }).toString();
+  const payload = await requestJson(url, {
+    Referer: "https://quote.eastmoney.com/",
+    "User-Agent": "Mozilla/5.0",
+  });
+  const data = payload?.data || {};
+  const decimals = Number.isFinite(Number(data.f59)) ? Number(data.f59) : 2;
+  const divisor = 10 ** decimals;
+  const latest = Number(data.f43) / divisor;
+  const previousClose = Number(data.f60) / divisor;
+  const change = Number(data.f169) / divisor;
+  const changePercent = Number(data.f170) / 100;
+  if (!Number.isFinite(latest)) throw new Error("上证综指实时行情不可用");
+  return {
+    code: data.f57 || "000001",
+    name: data.f58 || "上证指数",
+    close: latest,
+    previousClose: Number.isFinite(previousClose) ? previousClose : null,
+    change: Number.isFinite(change) ? change : null,
+    changePercent: Number.isFinite(changePercent) ? changePercent : null,
+    timestamp: Number(data.f86) || Math.floor(Date.now() / 1000),
+    date: formatShanghaiDate(new Date((Number(data.f86) || Math.floor(Date.now() / 1000)) * 1000)),
+    refreshedAt: formatShanghaiTimestamp(),
+    source: "东方财富上证综指实时行情公开数据",
+  };
+}
+
 export async function buildEastmoneySignals() {
   const configs = [
     { secid: "1.000300", key: "em_hs300", name: "沪深300", signalName: "沪深300确认", detailName: "沪深300", sensitivity: 7 },
