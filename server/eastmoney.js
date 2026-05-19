@@ -263,6 +263,29 @@ async function fetchEastmoneyIndex({ secid, key, name, signalName, detailName, s
   };
 }
 
+export async function fetchShanghaiCompositeDailyCandles() {
+  const url = new URL("https://push2his.eastmoney.com/api/qt/stock/kline/get");
+  url.search = new URLSearchParams({
+    secid: "1.000001",
+    fields1: "f1,f2,f3,f4,f5,f6",
+    fields2: "f51,f52,f53,f54,f55,f56,f57,f58",
+    klt: "101",
+    fqt: "1",
+    beg: "20250101",
+    end: "20500101",
+  }).toString();
+  const points = parseEastmoneyKlines(await requestJson(url, {
+    Referer: "https://quote.eastmoney.com/",
+    "User-Agent": "Mozilla/5.0",
+  }));
+  if (points.length < 2) throw new Error("上证综指日 K 线不足");
+  return {
+    candles: points,
+    refreshedAt: formatShanghaiTimestamp(),
+    source: "东方财富上证综指日 K 线公开数据",
+  };
+}
+
 export async function buildEastmoneySignals() {
   const configs = [
     { secid: "1.000300", key: "em_hs300", name: "沪深300", signalName: "沪深300确认", detailName: "沪深300", sensitivity: 7 },

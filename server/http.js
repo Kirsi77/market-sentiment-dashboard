@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   buildEastmoneySignals,
+  fetchShanghaiCompositeDailyCandles,
   buildFundDetail,
   buildFundCategories,
   buildFundMarketRankings,
@@ -242,6 +243,15 @@ app.get("/api/eastmoney/market-signals", async (_req, res) => {
     }, 200, "public, max-age=300, stale-while-revalidate=600");
   } catch (error) {
     sendJson(res, { configured: false, signals: [], error: error.message }, 500, "no-store");
+  }
+});
+
+app.get("/api/eastmoney/shanghai-composite-daily", async (_req, res) => {
+  try {
+    const payload = await fetchShanghaiCompositeDailyCandles();
+    sendJson(res, { configured: true, ...payload }, 200, "no-store");
+  } catch (error) {
+    sendJson(res, { configured: false, candles: [], error: error.message }, 500, "no-store");
   }
 });
 

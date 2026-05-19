@@ -473,6 +473,21 @@ function buildLiveModel(points) {
 }
 
 async function fetchShanghaiCompositeModel() {
+  const response = await fetchFreshJson("/api/eastmoney/shanghai-composite-daily", "上证综指日线");
+  const points = response.candles || [];
+  if (points.length < 30) throw new Error("东方财富上证综指日线不足。");
+  const model = buildLiveModel(points);
+  return {
+    ...model,
+    meta: {
+      ...model.meta,
+      source: response.source || "东方财富上证综指日 K 线公开数据",
+      refreshedAt: response.refreshedAt,
+    },
+  };
+}
+
+async function fetchYahooShanghaiCompositeModel() {
   const response = await fetch("/api/yahoo/v8/finance/chart/000001.SS?range=1y&interval=1d");
   if (!response.ok) throw new Error(`Quote request failed: ${response.status}`);
   const payload = await response.json();
@@ -483,6 +498,12 @@ async function fetchShanghaiCompositeModel() {
 }
 
 async function fetchCandlesForRange(config) {
+  if (config.key === "daily") {
+    const payload = await fetchFreshJson("/api/eastmoney/shanghai-composite-daily", "上证综指日线");
+    const points = payload.candles || [];
+    if (!points.length) throw new Error("东方财富日 K 线响应为空。");
+    return points;
+  }
   const response = await fetch(`/api/yahoo/v8/finance/chart/000001.SS?range=${config.range}&interval=${config.interval}`);
   if (!response.ok) throw new Error(`K 线请求失败：${response.status}`);
   const payload = await response.json();
@@ -2092,6 +2113,10 @@ function App() {
   useEffect(() => {
     let cancelled = false;
     fetchShanghaiCompositeModel()
+      .catch((error) => {
+        console.warn(error);
+        return fetchYahooShanghaiCompositeModel();
+      })
       .then((model) => {
         if (cancelled) return;
         setMarketModel(model);
