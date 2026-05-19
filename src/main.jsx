@@ -771,8 +771,8 @@ async function fetchFundCategories() {
   return fetchFreshJson("/api/eastmoney/fund-categories", "fund categories");
 }
 
-async function fetchFundTopics() {
-  return fetchFreshJson("/api/eastmoney/fund-topics", "fund topics");
+async function fetchFundTopics(forceRefresh = false) {
+  return fetchFreshJson(`/api/eastmoney/fund-topics${forceRefresh ? "?refresh=1" : ""}`, "fund topics");
 }
 
 async function fetchFundMarketRankings() {
@@ -1376,7 +1376,7 @@ function FundOnlyPage({ topics, state, refreshedAt, marketRankings, marketRankin
           <span>主题强度</span>
           <span>近 1 月</span>
         </div>
-        {state === "live" && sorted.map((item, index) => (
+        {sorted.length > 0 && sorted.map((item, index) => (
           <button
             type="button"
             className={`fund-rank-row ${selectedTopicCode === item.code ? "selected" : ""}`}
@@ -1397,7 +1397,7 @@ function FundOnlyPage({ topics, state, refreshedAt, marketRankings, marketRankin
             <span>{formatPercent(item.month)}</span>
           </button>
         ))}
-        {state !== "live" && (
+        {!sorted.length && (
           <div className="fund-rank-empty">基金主题公开数据正在加载，暂无可展示榜单。</div>
         )}
       </div>
@@ -2299,19 +2299,35 @@ function App() {
     let cancelled = false;
     const loadFundTopics = (initial = false) => {
       if (initial) setFundTopicState("loading");
-      fetchFundTopics()
+      const applyPayload = (payload) => {
+        if (cancelled) return;
+        const topics = payload.topics || [];
+        setFundTopics(topics);
+        setFundTopicsRefreshedAt(payload.refreshedAt || null);
+        setFundTopicState(topics.length ? "live" : "empty");
+      };
+      const keepPreviousTopics = (error) => {
+        if (cancelled) return;
+        console.warn(error);
+        setFundTopics((current) => {
+          setFundTopicState(current.length ? "stale" : "error");
+          return current;
+        });
+      };
+      fetchFundTopics(false)
         .then((payload) => {
           if (cancelled) return;
           const topics = payload.topics || [];
-          setFundTopics(topics);
-          setFundTopicsRefreshedAt(payload.refreshedAt || null);
-          setFundTopicState(topics.length ? "live" : "empty");
+          if (topics.length) {
+            applyPayload(payload);
+            return null;
+          }
+          return fetchFundTopics(true).then(applyPayload);
         })
         .catch((error) => {
-          if (cancelled) return;
-          console.warn(error);
-          setFundTopics([]);
-          setFundTopicState("error");
+          fetchFundTopics(true)
+            .then(applyPayload)
+            .catch(() => keepPreviousTopics(error));
         });
     };
     loadFundTopics(true);
