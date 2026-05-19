@@ -3,9 +3,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   buildEastmoneySignals,
+  buildFundDetail,
   buildFundCategories,
+  buildFundMarketRankings,
   buildFundTopicDetail,
   buildFundTopics,
+  searchFunds,
 } from "./eastmoney.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -18,11 +21,26 @@ const app = express();
 app.disable("x-powered-by");
 
 const cacheStore = {
+  fundCategories: {
+    value: null,
+    expiresAt: 0,
+    inFlight: null,
+    refreshedAt: null,
+  },
   fundTopics: {
     value: null,
     expiresAt: 0,
     inFlight: null,
+    refreshedAt: null,
   },
+  fundMarketRankings: {
+    value: null,
+    expiresAt: 0,
+    inFlight: null,
+    refreshedAt: null,
+  },
+  fundTopicDetails: new Map(),
+  fundDetails: new Map(),
 };
 
 function sendJson(res, payload, status = 200, cacheControl = "public, max-age=120") {
@@ -31,20 +49,57 @@ function sendJson(res, payload, status = 200, cacheControl = "public, max-age=12
   res.status(status).json(payload);
 }
 
-async function getCachedFundTopics() {
+function formatShanghaiTimestamp(date = new Date()) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+async function getCachedFundCategories(forceRefresh = false) {
   const now = Date.now();
-  if (cacheStore.fundTopics.value && cacheStore.fundTopics.expiresAt > now) {
+  if (!forceRefresh && cacheStore.fundCategories.value && cacheStore.fundCategories.expiresAt > now) {
+    return cacheStore.fundCategories.value;
+  }
+
+  if (!forceRefresh && cacheStore.fundCategories.inFlight) {
+    return cacheStore.fundCategories.inFlight;
+  }
+
+  cacheStore.fundCategories.inFlight = buildFundCategories()
+    .then((categories) => {
+      cacheStore.fundCategories.value = categories;
+      cacheStore.fundCategories.expiresAt = Date.now() + 60 * 1000;
+      cacheStore.fundCategories.refreshedAt = formatShanghaiTimestamp();
+      return categories;
+    })
+    .finally(() => {
+      cacheStore.fundCategories.inFlight = null;
+    });
+
+  return cacheStore.fundCategories.inFlight;
+}
+
+async function getCachedFundTopics(forceRefresh = false) {
+  const now = Date.now();
+  if (!forceRefresh && cacheStore.fundTopics.value && cacheStore.fundTopics.expiresAt > now) {
     return cacheStore.fundTopics.value;
   }
 
-  if (cacheStore.fundTopics.inFlight) {
+  if (!forceRefresh && cacheStore.fundTopics.inFlight) {
     return cacheStore.fundTopics.inFlight;
   }
 
   cacheStore.fundTopics.inFlight = buildFundTopics()
     .then((topics) => {
       cacheStore.fundTopics.value = topics;
-      cacheStore.fundTopics.expiresAt = Date.now() + 15 * 60 * 1000;
+      cacheStore.fundTopics.expiresAt = Date.now() + 60 * 1000;
+      cacheStore.fundTopics.refreshedAt = formatShanghaiTimestamp();
       return topics;
     })
     .finally(() => {
@@ -52,6 +107,128 @@ async function getCachedFundTopics() {
     });
 
   return cacheStore.fundTopics.inFlight;
+}
+
+async function getCachedFundMarketRankings(forceRefresh = false) {
+  const now = Date.now();
+  if (!forceRefresh && cacheStore.fundMarketRankings.value && cacheStore.fundMarketRankings.expiresAt > now) {
+    return cacheStore.fundMarketRankings.value;
+  }
+
+  if (!forceRefresh && cacheStore.fundMarketRankings.inFlight) {
+    return cacheStore.fundMarketRankings.inFlight;
+  }
+
+  cacheStore.fundMarketRankings.inFlight = buildFundMarketRankings()
+    .then((rankings) => {
+      cacheStore.fundMarketRankings.value = rankings;
+      cacheStore.fundMarketRankings.expiresAt = Date.now() + 60 * 1000;
+      cacheStore.fundMarketRankings.refreshedAt = rankings.refreshedAt || formatShanghaiTimestamp();
+      return rankings;
+    })
+    .finally(() => {
+      cacheStore.fundMarketRankings.inFlight = null;
+    });
+
+  return cacheStore.fundMarketRankings.inFlight;
+}
+
+function getTopicDetailCacheEntry(code) {
+  if (!cacheStore.fundTopicDetails.has(code)) {
+    cacheStore.fundTopicDetails.set(code, {
+      value: null,
+      expiresAt: 0,
+      inFlight: null,
+    });
+  }
+  return cacheStore.fundTopicDetails.get(code);
+}
+
+async function getCachedFundTopicDetail(code, forceRefresh = false) {
+  const entry = getTopicDetailCacheEntry(code);
+  const now = Date.now();
+  const hasStableTrend =
+    entry.value?.trendGranularity === "intraday" ||
+    entry.value?.trendGranularity === "previous_intraday" ||
+    entry.value?.intradayFallback;
+  if (!forceRefresh && entry.value && entry.expiresAt > now && hasStableTrend) {
+    return entry.value;
+  }
+
+  if (!forceRefresh && entry.inFlight) {
+    return entry.inFlight;
+  }
+
+  entry.inFlight = buildFundTopicDetail(code)
+    .then((detail) => {
+      const previous = entry.value;
+      const nextDetail =
+        !detail?.intraday?.length && previous?.intraday?.length
+          ? {
+              ...detail,
+              intraday: previous.intraday,
+              intradaySessionDate: previous.intradaySessionDate,
+              trendGranularity: previous.trendGranularity || detail.trendGranularity,
+              intradayFallback: true,
+            }
+          : {
+              ...detail,
+              intradayFallback: false,
+            };
+      entry.value = nextDetail;
+      entry.expiresAt = Date.now() + 60 * 1000;
+      return nextDetail;
+    })
+    .catch((error) => {
+      if (entry.value) {
+        return {
+          ...entry.value,
+          intradayFallback: Boolean(entry.value?.intraday?.length),
+        };
+      }
+      throw error;
+    })
+    .finally(() => {
+      entry.inFlight = null;
+    });
+
+  return entry.inFlight;
+}
+
+function getFundDetailCacheEntry(code) {
+  if (!cacheStore.fundDetails.has(code)) {
+    cacheStore.fundDetails.set(code, {
+      value: null,
+      expiresAt: 0,
+      inFlight: null,
+    });
+  }
+  return cacheStore.fundDetails.get(code);
+}
+
+async function getCachedFundDetail(code, forceRefresh = false) {
+  const entry = getFundDetailCacheEntry(code);
+  const now = Date.now();
+  if (!forceRefresh && entry.value && entry.expiresAt > now) {
+    return entry.value;
+  }
+  if (!forceRefresh && entry.inFlight) {
+    return entry.inFlight;
+  }
+  entry.inFlight = buildFundDetail(code)
+    .then((detail) => {
+      entry.value = detail;
+      entry.expiresAt = Date.now() + 60 * 1000;
+      return detail;
+    })
+    .catch((error) => {
+      if (entry.value) return entry.value;
+      throw error;
+    })
+    .finally(() => {
+      entry.inFlight = null;
+    });
+  return entry.inFlight;
 }
 
 app.get("/api/eastmoney/market-signals", async (_req, res) => {
@@ -68,42 +245,107 @@ app.get("/api/eastmoney/market-signals", async (_req, res) => {
   }
 });
 
-app.get("/api/eastmoney/fund-categories", async (_req, res) => {
+app.get("/api/eastmoney/fund-categories", async (req, res) => {
   try {
-    const categories = await buildFundCategories();
+    const forceRefresh = req.query.refresh === "1";
+    const categories = await getCachedFundCategories(forceRefresh);
     sendJson(res, {
       configured: true,
       source: "天天基金公开排行数据",
       categories,
-    }, 200, "public, max-age=900, stale-while-revalidate=1800");
+      refreshedAt: cacheStore.fundCategories.refreshedAt || formatShanghaiTimestamp(),
+    }, 200, "no-store");
   } catch (error) {
     sendJson(res, { configured: false, categories: [], error: error.message }, 500, "no-store");
   }
 });
 
-app.get("/api/eastmoney/fund-topics", async (_req, res) => {
+app.get("/api/eastmoney/fund-topics", async (req, res) => {
   try {
-    const topics = await getCachedFundTopics();
+    const forceRefresh = req.query.refresh === "1";
+    const topics = await getCachedFundTopics(forceRefresh);
     sendJson(res, {
       configured: true,
       source: "天天基金主题基金公开数据",
       topics,
-    }, 200, "public, max-age=900, stale-while-revalidate=1800");
+      refreshedAt: cacheStore.fundTopics.refreshedAt || formatShanghaiTimestamp(),
+    }, 200, "no-store");
   } catch (error) {
     sendJson(res, { configured: false, topics: [], error: error.message }, 500, "no-store");
   }
 });
 
+app.get("/api/eastmoney/fund-market-rankings", async (req, res) => {
+  try {
+    const forceRefresh = req.query.refresh === "1";
+    const rankings = await getCachedFundMarketRankings(forceRefresh);
+    sendJson(res, {
+      configured: true,
+      ...rankings,
+      refreshedAt: rankings.refreshedAt || cacheStore.fundMarketRankings.refreshedAt || formatShanghaiTimestamp(),
+    }, 200, "no-store");
+  } catch (error) {
+    sendJson(res, {
+      configured: false,
+      gainers: [],
+      losers: [],
+      purchases: [],
+      sales: [],
+      unavailable: {
+        purchases: "公开接口未提供全市场真实申购/购买量排名。",
+        sales: "公开接口未提供全市场真实赎回/售出量排名。",
+      },
+      error: error.message,
+    }, 500, "no-store");
+  }
+});
+
+app.get("/api/eastmoney/fund-search", async (req, res) => {
+  const keyword = req.query.keyword;
+  if (!keyword || typeof keyword !== "string") {
+    sendJson(res, { configured: false, funds: [], error: "缺少搜索关键词" }, 400, "no-store");
+    return;
+  }
+
+  try {
+    const funds = await searchFunds(keyword);
+    sendJson(res, {
+      configured: true,
+      funds,
+      source: "天天基金公开基金搜索",
+    }, 200, "no-store");
+  } catch (error) {
+    sendJson(res, { configured: false, funds: [], error: error.message }, 500, "no-store");
+  }
+});
+
 app.get("/api/eastmoney/fund-topic-detail", async (req, res) => {
   const code = req.query.code;
+  const forceRefresh = req.query.refresh === "1";
   if (!code || typeof code !== "string") {
     sendJson(res, { configured: false, error: "缺少主题代码" }, 400, "no-store");
     return;
   }
 
   try {
-    const detail = await buildFundTopicDetail(code);
-    sendJson(res, { configured: true, ...detail }, 200, "public, max-age=300, stale-while-revalidate=600");
+    const detail = await getCachedFundTopicDetail(code, forceRefresh);
+    sendJson(res, { configured: true, ...detail }, 200, "no-store");
+  } catch (error) {
+    sendJson(res, { configured: false, error: error.message }, 500, "no-store");
+  }
+});
+
+app.get("/api/eastmoney/fund-detail", async (req, res) => {
+  const code = req.query.code;
+  const forceRefresh = req.query.refresh === "1";
+  if (!code || typeof code !== "string") {
+    sendJson(res, { configured: false, error: "缺少基金代码" }, 400, "no-store");
+    return;
+  }
+
+  try {
+    const detail = await getCachedFundDetail(code, forceRefresh);
+    sendJson(res, { configured: true, ...detail }, 200, "no-store");
   } catch (error) {
     sendJson(res, { configured: false, error: error.message }, 500, "no-store");
   }

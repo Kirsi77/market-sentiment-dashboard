@@ -1,14 +1,19 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   BarChart3,
   Bell,
   CalendarDays,
-  ChevronDown,
+  MinusCircle,
+  Pencil,
+  Plus,
   Gauge,
   Search,
+  Trash2,
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
@@ -105,7 +110,13 @@ const fallbackSignals = [
   },
 ];
 
-const ranges = ["1D", "1W", "1M", "1Y"];
+const rangeOptions = [
+  { key: "1D", shortLabel: "日", longLabel: "当日" },
+  { key: "1W", shortLabel: "周", longLabel: "本周" },
+  { key: "1M", shortLabel: "月", longLabel: "本月" },
+  { key: "1Y", shortLabel: "年", longLabel: "本年" },
+];
+const ranges = rangeOptions.map((item) => item.key);
 const candleRanges = [
   { key: "intraday", label: "分时", range: "1d", interval: "5m", note: "当日 5 分钟" },
   { key: "hourly", label: "小时", range: "5d", interval: "60m", note: "近 5 日小时线" },
@@ -216,9 +227,40 @@ function labelForScore(score) {
   return "极度贪婪";
 }
 
+function rangeMeta(range) {
+  return rangeOptions.find((item) => item.key === range) || rangeOptions[0];
+}
+
+function describeDelta(delta) {
+  if (delta >= 12) return "情绪快速升温";
+  if (delta >= 4) return "情绪持续修复";
+  if (delta > -4) return "情绪变化平缓";
+  if (delta > -12) return "情绪正在回落";
+  return "情绪明显降温";
+}
+
 function getRangePoints(points, range) {
   const rangeSize = { "1D": 24, "1W": 40, "1M": 66, "1Y": 180 }[range] || 66;
   return points.slice(-rangeSize);
+}
+
+function formatShanghaiClock(date) {
+  const formatter = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(date);
+  const valueFor = (type) => parts.find((part) => part.type === type)?.value || "";
+  return {
+    dateLabel: `${valueFor("year")}年${valueFor("month")}月${valueFor("day")}日`,
+    timeLabel: `${valueFor("hour")}:${valueFor("minute")}:${valueFor("second")}`,
+  };
 }
 
 function scoreHistoryFromCloses(points, count = 7) {
@@ -557,6 +599,26 @@ function TrendChart({ values }) {
   );
 }
 
+function MiniSentimentBand({ score, label }) {
+  const safeScore = clamp(Number.isFinite(score) ? score : 50);
+  return (
+    <div className="mini-sentiment-band" aria-label="情绪区间定位">
+      <div className="mini-band-track">
+        <span className="mini-band-marker" style={{ left: `${safeScore}%` }} />
+      </div>
+      <div className="mini-band-labels">
+        <span>恐慌</span>
+        <span>中性</span>
+        <span>贪婪</span>
+      </div>
+      <div className="mini-band-caption">
+        <strong>{safeScore}</strong>
+        <small>{label}</small>
+      </div>
+    </div>
+  );
+}
+
 function movingAverage(candles, size) {
   return candles.map((item, index) => {
     if (index + 1 < size) return null;
@@ -580,6 +642,7 @@ function linePathFor(points, step, scaleY) {
 }
 
 function CandlestickChart({ candles, periodNote }) {
+  const [hoveredIndex, setHoveredIndex] = useState(null);
   const visible = candles.filter((item) => item && Number.isFinite(item.open) && Number.isFinite(item.high) && Number.isFinite(item.low) && Number.isFinite(item.close)).slice(-42);
   const safeCandles = visible.length ? visible : fallbackCandles["1D"];
   const ma5 = movingAverage(safeCandles, 5);
@@ -599,10 +662,40 @@ function CandlestickChart({ candles, periodNote }) {
   const step = 760 / safeCandles.length;
   const bodyWidth = Math.max(5, Math.min(13, step * 0.52));
   const gridValues = [top, top - (top - bottom) / 3, top - ((top - bottom) * 2) / 3, bottom];
+  const hoveredCandle = hoveredIndex == null ? null : safeCandles[hoveredIndex];
+  const hoveredDate = hoveredCandle
+    ? new Date(hoveredCandle.timestamp * 1000).toLocaleDateString("zh-CN", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      })
+    : null;
+  const hoveredChange = hoveredCandle && Number.isFinite(hoveredCandle.open) && hoveredCandle.open !== 0
+    ? ((hoveredCandle.close - hoveredCandle.open) / hoveredCandle.open) * 100
+    : null;
 
   return (
     <div className="candle-chart-wrap">
-      <svg className="candle-chart" viewBox="0 0 860 250" role="img" aria-label="上证综指 K 线图，含 MA5 MA10 MA20 均线">
+      {hoveredCandle && (
+        <aside className="candle-hover-card" aria-live="polite">
+          <strong>{hoveredDate}</strong>
+          <div className="candle-hover-grid">
+            <span>开盘</span>
+            <b>{hoveredCandle.open.toFixed(2)}</b>
+            <span>最高</span>
+            <b>{hoveredCandle.high.toFixed(2)}</b>
+            <span>最低</span>
+            <b>{hoveredCandle.low.toFixed(2)}</b>
+            <span>收盘</span>
+            <b>{hoveredCandle.close.toFixed(2)}</b>
+            <span>涨跌</span>
+            <b className={hoveredChange != null && hoveredChange >= 0 ? "up" : "down"}>
+              {hoveredChange == null ? "--" : formatPercent(hoveredChange)}
+            </b>
+          </div>
+        </aside>
+      )}
+      <svg className="candle-chart" viewBox="0 0 860 250" role="img" aria-label="上证综指 K 线图，含 MA5、MA10、MA20 均线">
         {gridValues.map((value) => (
           <g key={value}>
             <line x1="72" x2="836" y1={scaleY(value)} y2={scaleY(value)} />
@@ -624,13 +717,23 @@ function CandlestickChart({ candles, periodNote }) {
           return (
             <g key={`${item.timestamp}-${index}`} className={up ? "candle-up" : "candle-down"}>
               <line className="wick" x1={x} x2={x} y1={highY} y2={lowY} />
-              <rect x={x - bodyWidth / 2} y={bodyY} width={bodyWidth} height={bodyHeight} rx="2" />
+              <rect className="candle-body" x={x - bodyWidth / 2} y={bodyY} width={bodyWidth} height={bodyHeight} rx="2" />
+              <rect
+                className="candle-hitbox"
+                x={x - step / 2}
+                y={16}
+                width={step}
+                height={208}
+                fill="transparent"
+                onMouseEnter={() => setHoveredIndex(index)}
+                onMouseLeave={() => setHoveredIndex((current) => (current === index ? null : current))}
+              />
             </g>
           );
         })}
         <text className="axis-note" x="72" y="238">{periodNote} · {safeCandles.length} 根 K 线</text>
       </svg>
-      <div className="ma-legend" aria-label="均线图例">
+      <div className="ma-legend" aria-label="均线说明">
         <span><i className="ma5" />MA5</span>
         <span><i className="ma10" />MA10</span>
         <span><i className="ma20" />MA20</span>
@@ -640,23 +743,38 @@ function CandlestickChart({ candles, periodNote }) {
 }
 
 async function fetchFundCategories() {
-  const response = await fetch("/api/eastmoney/fund-categories");
-  if (!response.ok) throw new Error(`基金分类接口失败：${response.status}`);
-  const payload = await response.json();
-  return payload.categories || [];
+  return fetchFreshJson("/api/eastmoney/fund-categories", "fund categories");
 }
 
 async function fetchFundTopics() {
-  const response = await fetch("/api/eastmoney/fund-topics");
-  if (!response.ok) throw new Error(`基金主题接口失败：${response.status}`);
-  const payload = await response.json();
-  return payload.topics || [];
+  return fetchFreshJson("/api/eastmoney/fund-topics", "fund topics");
+}
+
+async function fetchFundMarketRankings() {
+  return fetchFreshJson("/api/eastmoney/fund-market-rankings", "fund market rankings");
+}
+
+async function fetchFundSearch(keyword) {
+  return fetchFreshJson(`/api/eastmoney/fund-search?keyword=${encodeURIComponent(keyword)}`, "fund search");
+}
+
+async function fetchFreshJson(url, label) {
+  const withTimestamp = `${url}${url.includes("?") ? "&" : "?"}t=${Date.now()}`;
+  let lastError = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(withTimestamp, { cache: "no-store" });
+      if (!response.ok) throw new Error(`${label}请求失败：${response.status}`);
+      return await response.json();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error(`${label}加载失败`);
 }
 
 async function fetchFundTopicDetail(code) {
-  const response = await fetch(`/api/eastmoney/fund-topic-detail?code=${encodeURIComponent(code)}`);
-  if (!response.ok) throw new Error(`基金主题详情接口失败：${response.status}`);
-  return response.json();
+  return fetchFreshJson(`/api/eastmoney/fund-topic-detail?code=${encodeURIComponent(code)}`, "主题详情");
 }
 
 function formatPercent(value) {
@@ -664,13 +782,57 @@ function formatPercent(value) {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
+async function fetchFundDetail(code) {
+  return fetchFreshJson(`/api/eastmoney/fund-detail?code=${encodeURIComponent(code)}`, "基金详情");
+}
+
+function formatNav(value) {
+  if (!Number.isFinite(value)) return "--";
+  return value.toFixed(4);
+}
+
+function formatRatio(value) {
+  if (!Number.isFinite(value)) return "--";
+  return `${value.toFixed(2)}%`;
+}
+
+function formatPrice(value) {
+  if (!Number.isFinite(value)) return "--";
+  return value.toFixed(2);
+}
+
 function FundCategoryPanel({ categories, state, onOpenFull }) {
-  const sorted = [...categories].sort((a, b) => b.monthAvg - a.monthAvg);
-  const maxAbs = Math.max(1, ...sorted.map((item) => Math.abs(item.monthAvg || 0)));
+  const [fundRange, setFundRange] = useState("month");
+  const fundRangeMeta = {
+    day: { label: "日", valueKey: "dayAvg", helperKey: "weekAvg", helperLabel: "近 1 周" },
+    week: { label: "周", valueKey: "weekAvg", helperKey: "monthAvg", helperLabel: "近 1 月" },
+    month: { label: "月", valueKey: "monthAvg", helperKey: "quarterAvg", helperLabel: "近 3 月" },
+    year: { label: "年", valueKey: "yearAvg", helperKey: "quarterAvg", helperLabel: "近 3 月" },
+  }[fundRange];
+  const sorted = [...categories].sort((a, b) => (b[fundRangeMeta.valueKey] || 0) - (a[fundRangeMeta.valueKey] || 0));
+  const maxAbs = Math.max(1, ...sorted.map((item) => Math.abs(item[fundRangeMeta.valueKey] || 0)));
   return (
     <section id="funds" className="fund-section">
       <div className="section-heading">
-        <h2>基金分类涨幅</h2>
+        <div className="section-heading-main">
+          <h2>基金分类涨幅</h2>
+          <div className="inline-range-tabs" aria-label="基金分类涨幅区间">
+            {[
+              { key: "day", label: "日" },
+              { key: "week", label: "周" },
+              { key: "month", label: "月" },
+              { key: "year", label: "年" },
+            ].map((item) => (
+              <button
+                key={item.key}
+                className={fundRange === item.key ? "active" : ""}
+                onClick={() => setFundRange(item.key)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="section-actions">
           <span>{state === "live" ? "东方财富 / 天天基金公开排行样本" : "正在加载公开数据"}</span>
           <button onClick={onOpenFull}>进入基金榜单</button>
@@ -678,22 +840,24 @@ function FundCategoryPanel({ categories, state, onOpenFull }) {
       </div>
       <div className="fund-grid">
         {sorted.map((item) => {
-          const tone = item.monthAvg >= 0 ? "up" : "down";
-          const width = `${Math.max(8, (Math.abs(item.monthAvg) / maxAbs) * 100)}%`;
+          const primaryValue = item[fundRangeMeta.valueKey];
+          const helperValue = item[fundRangeMeta.helperKey];
+          const tone = primaryValue >= 0 ? "up" : "down";
+          const width = `${Math.max(8, (Math.abs(primaryValue) / maxAbs) * 100)}%`;
           return (
             <article className="fund-card" key={item.key}>
               <div className="fund-card-top">
                 <strong>{item.label}</strong>
-                <span className={tone}>{formatPercent(item.monthAvg)}</span>
+                <span className={tone}>{formatPercent(primaryValue)}</span>
               </div>
               <div className="fund-bar" aria-hidden="true">
                 <i className={tone} style={{ width }} />
               </div>
               <div className="fund-metrics">
                 <span>日均 {formatPercent(item.dayAvg)}</span>
-                <span>近 3 月 {formatPercent(item.quarterAvg)}</span>
+                <span>{fundRangeMeta.helperLabel} {formatPercent(helperValue)}</span>
               </div>
-              <p>{item.topFunds?.[0]?.name || "公开排行样本"} · 前 30 只同类基金样本，按近 1 月表现排序</p>
+              <p>{item.topFunds?.[0]?.name || "公开排行样本"} · 前 30 只同类基金样本，按近 {fundRangeMeta.label}维度排序</p>
             </article>
           );
         })}
@@ -708,22 +872,346 @@ function FundCategoryPanel({ categories, state, onOpenFull }) {
   );
 }
 
-function FundOnlyPage({ topics, state, onBack }) {
+const portfolioStorageKey = "kirsi-fund-portfolios-v1";
+
+function createPortfolio(name = "1.0") {
+  return {
+    id: `portfolio-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    name,
+    holdings: [],
+  };
+}
+
+function loadPortfolios() {
+  if (typeof window === "undefined") return [createPortfolio()];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(portfolioStorageKey) || "[]");
+    if (Array.isArray(parsed) && parsed.length) {
+      return parsed.map((item, index) => ({
+        id: item.id || `portfolio-${index}`,
+        name: item.name || `${index + 1}.0`,
+        holdings: Array.isArray(item.holdings) ? item.holdings : [],
+      }));
+    }
+  } catch {
+    // Ignore broken local data and rebuild the default portfolio.
+  }
+  return [createPortfolio()];
+}
+
+function savePortfolios(portfolios) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(portfolioStorageKey, JSON.stringify(portfolios));
+}
+
+function parseInputNumber(value) {
+  const normalized = String(value || "").replace(/,/g, "").trim();
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatMoney(value) {
+  if (!Number.isFinite(value)) return "--";
+  return value.toLocaleString("zh-CN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function FundPortfolioTracker({ onOpenFund }) {
+  const [portfolios, setPortfolios] = useState(() => loadPortfolios());
+  const [activePortfolioId, setActivePortfolioId] = useState(() => portfolios[0]?.id || "");
+  const [fundQuery, setFundQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchState, setSearchState] = useState("idle");
+  const [selectedFund, setSelectedFund] = useState(null);
+  const [purchaseDate, setPurchaseDate] = useState("");
+  const [holdingAmount, setHoldingAmount] = useState("");
+  const [holdingProfit, setHoldingProfit] = useState("");
+  const activePortfolio = portfolios.find((item) => item.id === activePortfolioId) || portfolios[0];
+  const totalAmount = activePortfolio?.holdings.reduce((sum, item) => sum + parseInputNumber(item.amount), 0) || 0;
+  const totalProfit = activePortfolio?.holdings.reduce((sum, item) => sum + parseInputNumber(item.profit), 0) || 0;
+  const profitRatio = totalAmount ? (totalProfit / totalAmount) * 100 : 0;
+
+  useEffect(() => {
+    savePortfolios(portfolios);
+  }, [portfolios]);
+
+  useEffect(() => {
+    if (!portfolios.some((item) => item.id === activePortfolioId)) {
+      setActivePortfolioId(portfolios[0]?.id || "");
+    }
+  }, [activePortfolioId, portfolios]);
+
+  useEffect(() => {
+    const query = fundQuery.trim();
+    if (query.length < 2) {
+      setSearchResults([]);
+      setSearchState("idle");
+      return undefined;
+    }
+
+    let cancelled = false;
+    setSearchState("loading");
+    const timer = window.setTimeout(() => {
+      fetchFundSearch(query)
+        .then((payload) => {
+          if (cancelled) return;
+          setSearchResults(payload.funds || []);
+          setSearchState(payload.funds?.length ? "live" : "empty");
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          console.warn(error);
+          setSearchResults([]);
+          setSearchState("error");
+        });
+    }, 260);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [fundQuery]);
+
+  const updatePortfolios = (updater) => {
+    setPortfolios((current) => {
+      const next = updater(current);
+      return next.length ? next : [createPortfolio()];
+    });
+  };
+
+  const addPortfolio = () => {
+    const nextName = `${portfolios.length + 1}.0`;
+    const nextPortfolio = createPortfolio(nextName);
+    setPortfolios((current) => [...current, nextPortfolio]);
+    setActivePortfolioId(nextPortfolio.id);
+  };
+
+  const renamePortfolio = () => {
+    if (!activePortfolio) return;
+    const nextName = window.prompt("组合名称", activePortfolio.name);
+    if (!nextName?.trim()) return;
+    updatePortfolios((current) => current.map((item) => (
+      item.id === activePortfolio.id ? { ...item, name: nextName.trim() } : item
+    )));
+  };
+
+  const clearPortfolio = () => {
+    if (!activePortfolio) return;
+    const confirmed = window.confirm(`清空组合「${activePortfolio.name}」里的基金？`);
+    if (!confirmed) return;
+    updatePortfolios((current) => current.map((item) => (
+      item.id === activePortfolio.id ? { ...item, holdings: [] } : item
+    )));
+  };
+
+  const movePortfolio = (direction) => {
+    const index = portfolios.findIndex((item) => item.id === activePortfolioId);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= portfolios.length) return;
+    updatePortfolios((current) => {
+      const next = [...current];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
+
+  const removePortfolio = () => {
+    if (!activePortfolio || portfolios.length <= 1) return;
+    const confirmed = window.confirm(`删除组合「${activePortfolio.name}」？`);
+    if (!confirmed) return;
+    updatePortfolios((current) => current.filter((item) => item.id !== activePortfolio.id));
+  };
+
+  const addHolding = () => {
+    const fund = selectedFund || searchResults[0];
+    if (!fund?.code) return;
+    const holding = {
+      id: `holding-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      code: fund.code,
+      name: fund.shortName || fund.name,
+      purchaseDate,
+      amount: parseInputNumber(holdingAmount),
+      profit: parseInputNumber(holdingProfit),
+    };
+    updatePortfolios((current) => current.map((item) => (
+      item.id === activePortfolio.id
+        ? { ...item, holdings: [holding, ...item.holdings] }
+        : item
+    )));
+    setFundQuery("");
+    setSearchResults([]);
+    setSelectedFund(null);
+    setPurchaseDate("");
+    setHoldingAmount("");
+    setHoldingProfit("");
+  };
+
+  const removeHolding = (holdingId) => {
+    updatePortfolios((current) => current.map((item) => (
+      item.id === activePortfolio.id
+        ? { ...item, holdings: item.holdings.filter((holding) => holding.id !== holdingId) }
+        : item
+    )));
+  };
+
+  return (
+    <section className="portfolio-panel">
+      <div className="portfolio-head">
+        <div>
+          <span>自选组合</span>
+          <h2>基金持仓跟踪</h2>
+          <p>选择组合后录入基金、购买时间、持有金额和持有收益，方便盯住自己在意的基金。</p>
+        </div>
+        <div className="portfolio-actions">
+          <select value={activePortfolio?.id || ""} onChange={(event) => setActivePortfolioId(event.target.value)}>
+            {portfolios.map((portfolio) => (
+              <option key={portfolio.id} value={portfolio.id}>{portfolio.name}</option>
+            ))}
+          </select>
+          <button type="button" onClick={addPortfolio} aria-label="新建组合"><Plus size={16} /></button>
+          <button type="button" onClick={renamePortfolio} aria-label="修改组合名称"><Pencil size={16} /></button>
+          <button type="button" onClick={clearPortfolio} aria-label="清空组合"><Trash2 size={16} /></button>
+          <button type="button" onClick={() => movePortfolio(-1)} aria-label="上移组合"><ArrowUp size={16} /></button>
+          <button type="button" onClick={() => movePortfolio(1)} aria-label="下移组合"><ArrowDown size={16} /></button>
+          <button type="button" onClick={removePortfolio} disabled={portfolios.length <= 1} aria-label="删除组合"><MinusCircle size={16} /></button>
+        </div>
+      </div>
+
+      <div className="portfolio-summary">
+        <div><span>持有基金</span><strong>{activePortfolio?.holdings.length || 0}</strong></div>
+        <div><span>持有金额</span><strong>{formatMoney(totalAmount)}</strong></div>
+        <div><span>持有收益</span><strong className={totalProfit >= 0 ? "up" : "down"}>{formatMoney(totalProfit)}</strong></div>
+        <div><span>收益率</span><strong className={profitRatio >= 0 ? "up" : "down"}>{formatPercent(profitRatio)}</strong></div>
+      </div>
+
+      <div className="portfolio-form">
+        <div className="portfolio-search-field">
+          <label>基金名称/编号</label>
+          <input
+            value={selectedFund ? `${selectedFund.code} ${selectedFund.shortName || selectedFund.name}` : fundQuery}
+            onChange={(event) => {
+              setSelectedFund(null);
+              setFundQuery(event.target.value);
+            }}
+            placeholder="输入基金名称或代码"
+          />
+          {(searchResults.length > 0 || searchState === "empty" || searchState === "loading") && !selectedFund && (
+            <div className="portfolio-search-results">
+              {searchState === "loading" && <span>搜索中...</span>}
+              {searchState === "empty" && <span>没有找到匹配基金</span>}
+              {searchResults.map((fund) => (
+                <button
+                  type="button"
+                  key={fund.code}
+                  onClick={() => {
+                    setSelectedFund(fund);
+                    setFundQuery("");
+                  }}
+                >
+                  <strong>{fund.shortName || fund.name}</strong>
+                  <small>{fund.code} {fund.type}</small>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <label>
+          <span>购买时间</span>
+          <input type="date" value={purchaseDate} onChange={(event) => setPurchaseDate(event.target.value)} />
+        </label>
+        <label>
+          <span>持有金额</span>
+          <input inputMode="decimal" value={holdingAmount} onChange={(event) => setHoldingAmount(event.target.value)} placeholder="例如 10000" />
+        </label>
+        <label>
+          <span>持有收益</span>
+          <input inputMode="decimal" value={holdingProfit} onChange={(event) => setHoldingProfit(event.target.value)} placeholder="例如 320 或 -80" />
+        </label>
+        <button type="button" className="portfolio-add-button" onClick={addHolding} disabled={!selectedFund && !searchResults[0]}>
+          加入组合
+        </button>
+      </div>
+
+      <div className="portfolio-holdings">
+        <div className="portfolio-holdings-head">
+          <span>基金</span>
+          <span>购买时间</span>
+          <span>持有金额</span>
+          <span>持有收益</span>
+          <span>操作</span>
+        </div>
+        {activePortfolio?.holdings.length ? activePortfolio.holdings.map((holding) => (
+          <button
+            type="button"
+            className="portfolio-holding-row"
+            key={holding.id}
+            onClick={() => onOpenFund?.(holding)}
+          >
+            <div>
+              <strong>{holding.name}</strong>
+              <small>{holding.code}</small>
+            </div>
+            <span>{holding.purchaseDate || "--"}</span>
+            <b>{formatMoney(holding.amount)}</b>
+            <em className={holding.profit >= 0 ? "up" : "down"}>{formatMoney(holding.profit)}</em>
+            <div className="portfolio-row-actions">
+              <button type="button" onClick={(event) => {
+                event.stopPropagation();
+                onOpenFund?.(holding);
+              }}>查看</button>
+              <button type="button" onClick={(event) => {
+                event.stopPropagation();
+                removeHolding(holding.id);
+              }}>移除</button>
+            </div>
+          </button>
+        )) : (
+          <div className="portfolio-empty">这个组合还没有基金，先从上面搜索添加一只。</div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function FundOnlyPage({ topics, state, refreshedAt, marketRankings, marketRankingState, onBack }) {
   const [rankMode, setRankMode] = useState("change");
   const [selectedTopicCode, setSelectedTopicCode] = useState(null);
+  const [followTopTopic, setFollowTopTopic] = useState(true);
   const [topicDetail, setTopicDetail] = useState(null);
   const [topicDetailState, setTopicDetailState] = useState("idle");
+  const [selectedFund, setSelectedFund] = useState(null);
+  const [fundDetail, setFundDetail] = useState(null);
+  const [fundDetailState, setFundDetailState] = useState("idle");
+  const pageTopRef = useRef(null);
+  const detailPanelRef = useRef(null);
+  const lastTopicRefreshRef = useRef(null);
   const sorted = [...topics].sort((a, b) => (
     rankMode === "hot" ? (b.strength || 0) - (a.strength || 0) : (b.dayChange || 0) - (a.dayChange || 0)
   ));
-  const updated = new Date().toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
+  const updated = topicDetail?.refreshedAt || refreshedAt || "\u6570\u636E\u52A0\u8F7D\u4E2D";
+  const selectFundInline = (fund) => {
+    if (!fund?.code) return;
+    setSelectedFund(fund);
+    setFundDetail(null);
+    setFundDetailState("loading");
+    const normalizedName = (fund.name || fund.shortName || "").replace(/\s/g, "");
+    const matchedTopic = sorted.find((topic) => {
+      const topicName = (topic.name || "").replace(/\s/g, "");
+      return topicName && normalizedName.includes(topicName);
+    });
+    if (matchedTopic?.code && matchedTopic.code !== selectedTopicCode) {
+      setFollowTopTopic(false);
+      setSelectedTopicCode(matchedTopic.code);
+    }
+    window.requestAnimationFrame(() => {
+      const targetTop = detailPanelRef.current
+        ? detailPanelRef.current.getBoundingClientRect().top + window.scrollY - 18
+        : 0;
+      window.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" });
+    });
+  };
 
   useEffect(() => {
     if (!selectedTopicCode && sorted[0]?.code) {
@@ -732,28 +1220,82 @@ function FundOnlyPage({ topics, state, onBack }) {
   }, [selectedTopicCode, sorted]);
 
   useEffect(() => {
+    if (!sorted.length) return;
+    if (refreshedAt && refreshedAt !== lastTopicRefreshRef.current && selectedTopicCode !== sorted[0]?.code) {
+      lastTopicRefreshRef.current = refreshedAt;
+      setFollowTopTopic(true);
+      setSelectedTopicCode(sorted[0]?.code || null);
+      return;
+    }
+    if (refreshedAt && refreshedAt !== lastTopicRefreshRef.current) {
+      lastTopicRefreshRef.current = refreshedAt;
+    }
+    if (followTopTopic) {
+      if (selectedTopicCode !== sorted[0]?.code) {
+        setSelectedTopicCode(sorted[0]?.code || null);
+      }
+      return;
+    }
+    if (selectedTopicCode && sorted.some((item) => item.code === selectedTopicCode)) {
+      return;
+    }
+    setSelectedTopicCode(sorted[0]?.code || null);
+  }, [followTopTopic, refreshedAt, selectedTopicCode, sorted]);
+
+  useEffect(() => {
     if (!selectedTopicCode) return undefined;
     let cancelled = false;
-    setTopicDetailState("loading");
-    fetchFundTopicDetail(selectedTopicCode)
-      .then((detail) => {
-        if (cancelled) return;
-        setTopicDetail(detail);
-        setTopicDetailState("live");
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        console.warn(error);
-        setTopicDetail(null);
-        setTopicDetailState("error");
-      });
+    const loadTopicDetail = (initial = false) => {
+      if (initial) setTopicDetailState("loading");
+      fetchFundTopicDetail(selectedTopicCode)
+        .then((detail) => {
+          if (cancelled) return;
+          setTopicDetail(detail);
+          setTopicDetailState("live");
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          console.warn(error);
+          setTopicDetail(null);
+          setTopicDetailState("error");
+        });
+    };
+    loadTopicDetail(true);
+    const timer = window.setInterval(() => loadTopicDetail(false), 30000);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
   }, [selectedTopicCode]);
 
+  useEffect(() => {
+    if (!selectedFund?.code) return undefined;
+    let cancelled = false;
+    const loadFundDetail = (initial = false) => {
+      if (initial) setFundDetailState("loading");
+      fetchFundDetail(selectedFund.code)
+        .then((detail) => {
+          if (cancelled) return;
+          setFundDetail(detail);
+          setFundDetailState("live");
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          console.warn(error);
+          setFundDetail(null);
+          setFundDetailState("error");
+        });
+    };
+    loadFundDetail(true);
+    const timer = window.setInterval(() => loadFundDetail(false), 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [selectedFund]);
+
   return (
-    <section className="fund-only-page">
+    <section className="fund-only-page" ref={pageTopRef}>
       <div className="fund-only-top">
         <strong>基金主题</strong>
         <span>东方财富公开主题数据</span>
@@ -763,13 +1305,42 @@ function FundOnlyPage({ topics, state, onBack }) {
           <h1>基金主题细分榜</h1>
           <p>更新于 {updated}，按主题强度或实时涨跌排序。</p>
         </div>
-        <StrengthExplainer topic={topicDetail?.topic || sorted.find((item) => item.code === selectedTopicCode) || sorted[0]} />
+        <div className="fund-title-aside">
+          <StrengthExplainer topic={topicDetail?.topic || sorted.find((item) => item.code === selectedTopicCode) || sorted[0]} />
+          <MarketFundRankingCard rankings={marketRankings} state={marketRankingState} />
+        </div>
       </div>
       <div className="fund-rank-tabs" aria-label="基金榜单排序">
-        <button className={rankMode === "change" ? "active" : ""} onClick={() => setRankMode("change")}>涨幅榜</button>
-        <button className={rankMode === "hot" ? "active" : ""} onClick={() => setRankMode("hot")}>主题强度</button>
+        <button className={rankMode === "change" ? "active" : ""} onClick={() => {
+          setRankMode("change");
+          setFollowTopTopic(true);
+        }}>{"\u6DA8\u5E45\u699C"}</button>
+        <button className={rankMode === "hot" ? "active" : ""} onClick={() => {
+          setRankMode("hot");
+          setFollowTopTopic(true);
+        }}>{"\u4E3B\u9898\u5F3A\u5EA6"}</button>
       </div>
-      <TopicDetailPanel detail={topicDetail} state={topicDetailState} />
+      <FundPortfolioTracker
+        onOpenFund={selectFundInline}
+      />
+      <div ref={detailPanelRef}>
+        {selectedFund ? (
+          <SelectedFundPanel
+            fund={selectedFund}
+            detail={fundDetail}
+            state={fundDetailState}
+            topicDetail={topicDetail}
+            onClear={() => setSelectedFund(null)}
+            onOpenFund={selectFundInline}
+          />
+        ) : (
+          <TopicDetailPanel
+            detail={topicDetail}
+            state={topicDetailState}
+            onOpenFund={selectFundInline}
+          />
+        )}
+      </div>
       <div className="fund-rank-card">
         <div className="fund-rank-head">
           <span>排名</span>
@@ -783,7 +1354,14 @@ function FundOnlyPage({ topics, state, onBack }) {
             type="button"
             className={`fund-rank-row ${selectedTopicCode === item.code ? "selected" : ""}`}
             key={item.code}
-            onClick={() => setSelectedTopicCode(item.code)}
+            onClick={() => {
+              setFollowTopTopic(false);
+              setSelectedTopicCode(item.code);
+              const targetTop = pageTopRef.current
+                ? pageTopRef.current.getBoundingClientRect().top + window.scrollY - 16
+                : 0;
+              window.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" });
+            }}
           >
             <span className={index < 3 ? "hot-rank" : ""}>{String(index + 1).padStart(2, "0")}</span>
             <strong>{item.name}</strong>
@@ -815,53 +1393,566 @@ function StrengthExplainer({ topic }) {
   );
 }
 
+function MarketFundRankingCard({ rankings, state }) {
+  const [mode, setMode] = useState("gainers");
+  const tabs = [
+    { key: "gainers", label: "涨幅前十", metric: "日涨幅" },
+    { key: "losers", label: "跌幅前十", metric: "日跌幅" },
+    { key: "purchases", label: "购买前十", metric: "真实购买量" },
+    { key: "sales", label: "售出前十", metric: "真实售出量" },
+  ];
+  const activeTab = tabs.find((item) => item.key === mode) || tabs[0];
+  const rows = [...(rankings?.[mode] || [])].slice(0, 10);
+  const unavailableText = rankings?.unavailable?.[mode];
+  const dataDate = rows.find((item) => item.navDate)?.navDate || rankings?.dataDate || rankings?.refreshedAt || "--";
+
+  return (
+    <aside className="top-fund-mover-card">
+      <div className="top-fund-mover-head">
+        <span>全市场基金排行</span>
+        <small>{activeTab.metric}</small>
+      </div>
+      <div className="market-fund-rank-tabs" aria-label="全市场基金排行类型">
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            className={mode === tab.key ? "active" : ""}
+            onClick={() => setMode(tab.key)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      <div className="market-fund-rank-meta">
+        <span>{state === "live" ? "天天基金公开排行" : "正在加载公开排行"}</span>
+        <span>{dataDate}</span>
+      </div>
+      {rows.length ? rows.map((fund, index) => (
+        <div className="top-fund-mover-row" key={fund.code}>
+          <b>{String(index + 1).padStart(2, "0")}</b>
+          <strong>{fund.name}</strong>
+          <em className={(fund.dayChange || 0) >= 0 ? "up" : "down"}>{formatPercent(fund.dayChange)}</em>
+        </div>
+      )) : (
+        <div className="top-fund-mover-empty">
+          {unavailableText || "暂无可用全市场基金排行。"}
+        </div>
+      )}
+    </aside>
+  );
+}
+
+function parseClockLabelToMinutes(label) {
+  if (!label || typeof label !== "string") return null;
+  const match = label.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function isMiddayBreakPoint(label) {
+  const minutes = parseClockLabelToMinutes(label);
+  if (minutes == null) return false;
+  return minutes > 11 * 60 + 30 && minutes < 13 * 60;
+}
+
+function tradingSessionRatio(label) {
+  const minutes = parseClockLabelToMinutes(label);
+  if (minutes == null) return null;
+  const morningStart = 9 * 60 + 30;
+  const morningEnd = 11 * 60 + 30;
+  const afternoonStart = 13 * 60;
+  const afternoonEnd = 15 * 60;
+  if (minutes <= morningStart) return 0;
+  if (minutes <= morningEnd) return (minutes - morningStart) / 240;
+  if (minutes < afternoonStart) return 120 / 240;
+  if (minutes <= afternoonEnd) return (120 + (minutes - afternoonStart)) / 240;
+  return 1;
+}
+
 function IntradayLineChart({ points }) {
-  const safePoints = points?.length ? points : [];
+  const [hoveredIndex, setHoveredIndex] = useState(null);
+  const safePoints = (points || []).filter((item) => !isMiddayBreakPoint(item.time));
   if (!safePoints.length) {
-    return <div className="intraday-empty">暂无可用分时走势</div>;
+    return <div className="intraday-empty">暂无可用走势</div>;
   }
   const width = 640;
   const height = 260;
   const values = safePoints.map((item) => item.change);
   const max = Math.max(...values, 0);
   const min = Math.min(...values, 0);
-  const pad = Math.max(0.5, (max - min) * 0.18);
+  const pad = Math.max(0.6, (max - min) * 0.22);
   const top = max + pad;
   const bottom = min - pad;
-  const xFor = (index) => 28 + (index / Math.max(1, safePoints.length - 1)) * (width - 56);
-  const yFor = (value) => 24 + ((top - value) / (top - bottom)) * (height - 54);
-  const line = safePoints.map((item, index) => `${xFor(index)},${yFor(item.change)}`).join(" ");
-  const fill = `${line} ${width - 28},${height - 30} 28,${height - 30}`;
+  const chartLeft = 28;
+  const chartRight = width - 28;
+  const chartTop = 22;
+  const chartBottom = height - 34;
+  const xFor = (item, index) => {
+    const ratio = tradingSessionRatio(item.time);
+    if (ratio == null) {
+      return chartLeft + (index / Math.max(1, safePoints.length - 1)) * (chartRight - chartLeft);
+    }
+    return chartLeft + ratio * (chartRight - chartLeft);
+  };
+  const yFor = (value) => chartTop + ((top - value) / (top - bottom)) * (chartBottom - chartTop);
+  const chartPoints = safePoints.map((item, index) => ({ x: xFor(item, index), y: yFor(item.change) }));
+  const linePath = chartPoints.reduce((path, point, index, source) => {
+    if (index === 0) return `M ${point.x} ${point.y}`;
+    const previous = source[index - 1];
+    const controlX = (previous.x + point.x) / 2;
+    return `${path} C ${controlX} ${previous.y}, ${controlX} ${point.y}, ${point.x} ${point.y}`;
+  }, "");
+  const chartEndX = chartPoints.at(-1)?.x ?? chartRight;
+  const fillPath = `${linePath} L ${chartEndX} ${chartBottom} L ${chartLeft} ${chartBottom} Z`;
   const positive = safePoints.at(-1)?.change >= 0;
+  const hoveredPoint = hoveredIndex == null ? null : safePoints[hoveredIndex];
+  const hoveredChartPoint = hoveredIndex == null ? null : chartPoints[hoveredIndex];
+
   return (
-    <svg className="intraday-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="主题当日分时走势">
-      <defs>
-        <linearGradient id="intradayFill" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0" stopColor={positive ? "#d94835" : "#21965b"} stopOpacity="0.18" />
-          <stop offset="1" stopColor={positive ? "#d94835" : "#21965b"} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <line x1="28" x2={width - 28} y1={yFor(0)} y2={yFor(0)} />
-      <polygon points={fill} fill="url(#intradayFill)" />
-      <polyline points={line} fill="none" stroke={positive ? "#d94835" : "#21965b"} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-      <text x="28" y="18">{top.toFixed(2)}%</text>
-      <text x="28" y={height - 8}>{bottom.toFixed(2)}%</text>
-      <text x="28" y={height - 32}>09:30</text>
-      <text x={width / 2 - 28} y={height - 32}>11:30/13:00</text>
-      <text x={width - 58} y={height - 32}>15:00</text>
-    </svg>
+    <div className="line-chart-wrap">
+      {hoveredPoint && hoveredChartPoint && (
+        <div
+          className="line-chart-hover-card"
+          style={{ left: `${Math.min(width - 132, Math.max(12, hoveredChartPoint.x - 54))}px` }}
+        >
+          <strong>{hoveredPoint.time}</strong>
+          <span className={hoveredPoint.change >= 0 ? "up" : "down"}>{formatPercent(hoveredPoint.change)}</span>
+        </div>
+      )}
+      <svg className="intraday-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="主题分时走势">
+        <defs>
+          <linearGradient id="intradayFill" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0" stopColor={positive ? "#d94835" : "#21965b"} stopOpacity="0.16" />
+            <stop offset="1" stopColor={positive ? "#d94835" : "#21965b"} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <line className="intraday-baseline" x1={chartLeft} x2={chartRight} y1={yFor(0)} y2={yFor(0)} />
+        <path d={fillPath} fill="url(#intradayFill)" />
+        <path d={linePath} fill="none" stroke={positive ? "#d94835" : "#21965b"} strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
+        {hoveredChartPoint && (
+          <>
+            <line className="line-chart-guide" x1={hoveredChartPoint.x} x2={hoveredChartPoint.x} y1={chartTop} y2={chartBottom} />
+            <circle className="line-chart-dot" cx={hoveredChartPoint.x} cy={hoveredChartPoint.y} r="4.5" />
+          </>
+        )}
+        {safePoints.map((item, index) => {
+          const current = chartPoints[index];
+          const previous = chartPoints[index - 1];
+          const next = chartPoints[index + 1];
+          const left = previous ? (previous.x + current.x) / 2 : chartLeft;
+          const right = next ? (current.x + next.x) / 2 : chartRight;
+          return (
+            <rect
+              key={`${item.time}-${index}`}
+              className="line-chart-hitbox"
+              x={left}
+              y={chartTop}
+              width={Math.max(8, right - left)}
+              height={chartBottom - chartTop}
+              fill="transparent"
+              onMouseEnter={() => setHoveredIndex(index)}
+              onMouseLeave={() => setHoveredIndex((currentIndex) => (currentIndex === index ? null : currentIndex))}
+            />
+          );
+        })}
+        <text x={chartLeft} y={18}>{top.toFixed(2)}%</text>
+        <text x={chartLeft} y={height - 2}>{bottom.toFixed(2)}%</text>
+        <text x={chartLeft} y={height - 32}>09:30</text>
+        <text x={width / 2 - 46} y={height - 32}>11:30/13:00</text>
+        <text x={chartRight - 18} y={height - 32}>15:00</text>
+      </svg>
+    </div>
+  );
+}
+function FundLineChart({ points, positive, percent = true, labelMode = "time" }) {
+  const [hoveredIndex, setHoveredIndex] = useState(null);
+  const safePoints = (points || []).filter((item) => labelMode !== "time" || !isMiddayBreakPoint(item.time));
+  if (!safePoints.length) {
+    return <div className="intraday-empty">暂无可用走势</div>;
+  }
+  const width = 640;
+  const height = 260;
+  const values = safePoints.map((item) => item.value);
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const pad = Math.max(0.2, (max - min) * 0.22 || Math.abs(max || 1) * 0.08);
+  const top = max + pad;
+  const bottom = min - pad;
+  const chartLeft = 28;
+  const chartRight = width - 28;
+  const chartTop = 22;
+  const chartBottom = height - 34;
+  const xFor = (item, index) => {
+    if (labelMode !== "time") {
+      return chartLeft + (index / Math.max(1, safePoints.length - 1)) * (chartRight - chartLeft);
+    }
+    const ratio = tradingSessionRatio(item.time);
+    if (ratio == null) {
+      return chartLeft + (index / Math.max(1, safePoints.length - 1)) * (chartRight - chartLeft);
+    }
+    return chartLeft + ratio * (chartRight - chartLeft);
+  };
+  const yFor = (value) => chartTop + ((top - value) / Math.max(1e-6, top - bottom)) * (chartBottom - chartTop);
+  const chartPoints = safePoints.map((item, index) => ({ x: xFor(item, index), y: yFor(item.value) }));
+  const linePath = chartPoints.reduce((path, point, index, source) => {
+    if (index === 0) return `M ${point.x} ${point.y}`;
+    const previous = source[index - 1];
+    const controlX = (previous.x + point.x) / 2;
+    return `${path} C ${controlX} ${previous.y}, ${controlX} ${point.y}, ${point.x} ${point.y}`;
+  }, "");
+  const chartEndX = chartPoints.at(-1)?.x ?? chartRight;
+  const fillPath = `${linePath} L ${chartEndX} ${chartBottom} L ${chartLeft} ${chartBottom} Z`;
+  const toneUp = positive ?? safePoints.at(-1)?.value >= safePoints[0]?.value;
+  const tone = toneUp ? "#d94835" : "#21965b";
+  const hoveredPoint = hoveredIndex == null ? null : safePoints[hoveredIndex];
+  const hoveredChartPoint = hoveredIndex == null ? null : chartPoints[hoveredIndex];
+  const labelAt = (index) => {
+    const point = safePoints[index];
+    if (!point) return "";
+    return labelMode === "date" ? point.date.slice(5) : point.time;
+  };
+  const formatValue = (value) => (percent ? `${value.toFixed(2)}%` : value.toFixed(4));
+
+  return (
+    <div className="line-chart-wrap">
+      {hoveredPoint && hoveredChartPoint && (
+        <div
+          className="line-chart-hover-card"
+          style={{ left: `${Math.min(width - 132, Math.max(12, hoveredChartPoint.x - 54))}px` }}
+        >
+          <strong>{labelMode === "time" ? hoveredPoint.time : hoveredPoint.date}</strong>
+          <span className={hoveredPoint.value >= 0 ? "up" : "down"}>{formatValue(hoveredPoint.value)}</span>
+        </div>
+      )}
+      <svg className="intraday-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="基金走势">
+        <defs>
+          <linearGradient id="fundDetailFill" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0" stopColor={tone} stopOpacity="0.16" />
+            <stop offset="1" stopColor={tone} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <line className="intraday-baseline" x1={chartLeft} x2={chartRight} y1={yFor(percent ? 0 : min)} y2={yFor(percent ? 0 : min)} />
+        <path d={fillPath} fill="url(#fundDetailFill)" />
+        <path d={linePath} fill="none" stroke={tone} strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
+        {hoveredChartPoint && (
+          <>
+            <line className="line-chart-guide" x1={hoveredChartPoint.x} x2={hoveredChartPoint.x} y1={chartTop} y2={chartBottom} />
+            <circle className="line-chart-dot" cx={hoveredChartPoint.x} cy={hoveredChartPoint.y} r="4.5" />
+          </>
+        )}
+        {safePoints.map((item, index) => {
+          const current = chartPoints[index];
+          const previous = chartPoints[index - 1];
+          const next = chartPoints[index + 1];
+          const left = previous ? (previous.x + current.x) / 2 : chartLeft;
+          const right = next ? (current.x + next.x) / 2 : chartRight;
+          return (
+            <rect
+              key={`${labelMode}-${labelAt(index)}-${index}`}
+              className="line-chart-hitbox"
+              x={left}
+              y={chartTop}
+              width={Math.max(8, right - left)}
+              height={chartBottom - chartTop}
+              fill="transparent"
+              onMouseEnter={() => setHoveredIndex(index)}
+              onMouseLeave={() => setHoveredIndex((currentIndex) => (currentIndex === index ? null : currentIndex))}
+            />
+          );
+        })}
+        <text x={chartLeft} y={18}>{formatValue(top)}</text>
+        <text x={chartLeft} y={height - 2}>{formatValue(bottom)}</text>
+        <text x={chartLeft} y={height - 32}>{labelMode === "time" ? "09:30" : labelAt(0)}</text>
+        <text x={width / 2 - 46} y={height - 32}>{labelMode === "time" ? "11:30/13:00" : labelAt(Math.floor((safePoints.length - 1) / 2))}</text>
+        <text x={chartRight - 18} y={height - 32}>{labelMode === "time" ? "15:00" : labelAt(safePoints.length - 1)}</text>
+      </svg>
+    </div>
+  );
+}
+function FundDetailPage({ fund, detail, state, onBack }) {
+  const [activeTab, setActiveTab] = useState("intraday");
+
+  useEffect(() => {
+    setActiveTab("intraday");
+  }, [fund?.code]);
+
+  if (state === "loading") {
+    return <section className="fund-detail-page loading">正在加载基金详情...</section>;
+  }
+
+  if (!detail?.fund) {
+    return (
+      <section className="fund-detail-page loading">
+        <button type="button" className="fund-detail-back" onClick={onBack}>返回主题榜</button>
+        暂无可用基金详情。
+      </section>
+    );
+  }
+
+  const fundMeta = detail.fund;
+  const currentChange = Number.isFinite(fundMeta.estimatedChange) ? fundMeta.estimatedChange : fund?.dayChange;
+  const historyCurve = (detail.historyCurve || []).map((item) => ({ date: item.date, value: item.value }));
+  const performanceCurve = (detail.performanceCurve || []).map((item) => ({ date: item.date, value: item.value }));
+  const recentHistory = detail.navHistory || [];
+  const stageMetrics = detail.stageMetrics || [];
+  const holdings = detail.holdings || [];
+
+  return (
+    <section className="fund-detail-page">
+      <div className="fund-detail-topbar">
+        <button type="button" className="fund-detail-back" onClick={onBack}>返回主题榜</button>
+        <span>基金详情</span>
+      </div>
+
+      <article className="fund-detail-hero">
+        <div className="fund-detail-head">
+          <div>
+            <small>{fundMeta.code}</small>
+            <h1>{fundMeta.name || fund?.name}</h1>
+            <p>
+              {fund?.type || "基金"}
+              {" · "}
+              {detail?.trendGranularity === "intraday" ? "实时估算 " : "最近净值 "}
+              {fundMeta.latestNavDate || "--"}
+            </p>
+          </div>
+          <strong className={(currentChange || 0) >= 0 ? "up" : "down"}>{formatPercent(currentChange)}</strong>
+        </div>
+
+        <div className="topic-metrics fund-detail-metrics">
+          <span>最新净值<b>{formatNav(fundMeta.latestNav)}</b></span>
+          <span>近 1 月<b>{formatPercent(fundMeta.month)}</b></span>
+          <span>近 3 月<b>{formatPercent(fundMeta.quarter)}</b></span>
+          <span>近 6 月<b>{formatPercent(fundMeta.halfYear)}</b></span>
+        </div>
+
+        <div className="data-badges fund-detail-badges">
+          <span className="source-status live">实时估值 / 净值 / 持仓</span>
+          <span>公开接口 / 天天基金 / 东方财富</span>
+          <span>季报持仓口径</span>
+        </div>
+
+        <div className="fund-detail-tabs" aria-label="基金详情切换">
+          <button className={activeTab === "intraday" ? "active" : ""} onClick={() => setActiveTab("intraday")}>实时</button>
+          <button className={activeTab === "history" ? "active" : ""} onClick={() => setActiveTab("history")}>历史净值</button>
+          <button className={activeTab === "return" ? "active" : ""} onClick={() => setActiveTab("return")}>阶段涨幅</button>
+          <button className={activeTab === "drawdown" ? "active" : ""} onClick={() => setActiveTab("drawdown")}>阶段回撤</button>
+        </div>
+
+        {activeTab === "intraday" && (
+          <>
+            <FundLineChart
+              points={(detail.intraday || []).map((item) => ({ ...item, value: item.change }))}
+              positive={(currentChange || 0) >= 0}
+              percent
+              labelMode="time"
+            />
+            <p className="fund-detail-note">
+              {detail.trendGranularity === "previous_intraday"
+                ? `实时分时不可用时，自动回退为上一交易日走势（交易日 ${detail.intradaySessionDate || "--"}）。`
+                : `当前展示基金分时估算走势（交易日 ${detail.intradaySessionDate || "--"}）。`}
+            </p>
+          </>
+        )}
+
+        {activeTab === "history" && (
+          <>
+            <FundLineChart points={historyCurve} positive percent={false} labelMode="date" />
+            <div className="fund-history-table">
+              <div className="fund-history-head">
+                <span>日期</span>
+                <span>单位净值</span>
+                <span>日涨跌</span>
+              </div>
+              {recentHistory.map((item) => (
+                <div className="fund-history-row" key={item.date}>
+                  <span>{item.date.slice(5)}</span>
+                  <strong>{formatNav(item.nav)}</strong>
+                  <em className={(item.dailyChange || 0) >= 0 ? "up" : "down"}>{formatPercent(item.dailyChange)}</em>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {activeTab === "return" && (
+          <>
+            <FundLineChart points={performanceCurve} positive={(performanceCurve.at(-1)?.value || 0) >= 0} percent labelMode="date" />
+            <div className="fund-stage-table">
+              <div className="fund-stage-head">
+                <span>区间</span>
+                <span>本基金</span>
+                <span>沪深 300</span>
+                <span>超额收益</span>
+              </div>
+              {stageMetrics.map((item) => (
+                <div className="fund-stage-row" key={item.key}>
+                  <span>{item.label}</span>
+                  <strong className={(item.fundReturn || 0) >= 0 ? "up" : "down"}>{formatPercent(item.fundReturn)}</strong>
+                  <em className={(item.benchmarkReturn || 0) >= 0 ? "up" : "down"}>{formatPercent(item.benchmarkReturn)}</em>
+                  <b className={(item.excessReturn || 0) >= 0 ? "up" : "down"}>{formatPercent(item.excessReturn)}</b>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {activeTab === "drawdown" && (
+          <div className="fund-stage-table">
+            <div className="fund-stage-head">
+              <span>区间</span>
+              <span>本基金</span>
+              <span>沪深 300</span>
+            </div>
+            {stageMetrics.map((item) => (
+              <div className="fund-stage-row" key={item.key}>
+                <span>{item.label}</span>
+                <strong className={(item.fundDrawdown || 0) >= 0 ? "up" : "down"}>{formatPercent(item.fundDrawdown)}</strong>
+                <em className={(item.benchmarkDrawdown || 0) >= 0 ? "up" : "down"}>{formatPercent(item.benchmarkDrawdown)}</em>
+              </div>
+            ))}
+          </div>
+        )}
+      </article>
+
+      <article className="fund-holding-card">
+        <div className="section-heading">
+          <h2>重仓股票</h2>
+          <span>{detail.holdingsQuarter ? `${detail.holdingsQuarter} 持仓` : "最近季度持仓"}</span>
+        </div>
+        <div className="fund-holding-head">
+          <span>股票</span>
+          <span>涨跌幅</span>
+          <span>持仓占比</span>
+        </div>
+        {holdings.map((item) => (
+          <div className="fund-holding-row" key={`${item.code}-${item.name}`}>
+            <div className="fund-holding-name">
+              <strong>{item.name}</strong>
+              <small>{item.code}</small>
+            </div>
+            <em className={(item.dayChange || 0) >= 0 ? "up" : "down"}>
+              {Number.isFinite(item.dayChange) ? formatPercent(item.dayChange) : "--"}
+            </em>
+            <span>{formatRatio(item.weight)}</span>
+          </div>
+        ))}
+        {!holdings.length && <div className="fund-rank-empty">这个基金暂时没有可展示的公开持仓明细。</div>}
+      </article>
+    </section>
   );
 }
 
-function TopicDetailPanel({ detail, state }) {
+function TopicFundComparison({ funds, onOpenFund }) {
   const [fundSort, setFundSort] = useState("day");
-  const topic = detail?.topic;
   const fundSortConfig = {
     day: { key: "dayChange", label: "日排序" },
     week: { key: "week", label: "周排序" },
     month: { key: "month", label: "月排序" },
   }[fundSort];
-  const funds = [...(detail?.funds || [])].sort((a, b) => (b[fundSortConfig.key] || 0) - (a[fundSortConfig.key] || 0));
+  const sortedFunds = [...(funds || [])].sort((a, b) => (b[fundSortConfig.key] || 0) - (a[fundSortConfig.key] || 0));
+  return (
+    <aside className="topic-fund-card">
+      <div className="section-heading">
+        <h2>主题基金比较</h2>
+        <div className="fund-sort-tabs" aria-label="主题基金排序">
+          <button className={fundSort === "day" ? "active" : ""} onClick={() => setFundSort("day")}>日</button>
+          <button className={fundSort === "week" ? "active" : ""} onClick={() => setFundSort("week")}>周</button>
+          <button className={fundSort === "month" ? "active" : ""} onClick={() => setFundSort("month")}>月</button>
+        </div>
+      </div>
+      <div className="topic-fund-list">
+        {sortedFunds.slice(0, 9).map((fund, index) => (
+          <button
+            type="button"
+            className="topic-fund-row"
+            key={fund.code}
+            onClick={() => onOpenFund?.(fund)}
+          >
+            <span className={index < 3 ? "hot-rank" : ""}>{String(index + 1).padStart(2, "0")}</span>
+            <strong>{fund.name}</strong>
+            <em className={(fund[fundSortConfig.key] || 0) >= 0 ? "up" : "down"}>{formatPercent(fund[fundSortConfig.key])}</em>
+            <b>{fundSortConfig.label}</b>
+          </button>
+        ))}
+        {!sortedFunds.length && <div className="fund-rank-empty">当前主题暂时没有可比较基金。</div>}
+      </div>
+    </aside>
+  );
+}
+
+function SelectedFundPanel({ fund, detail, state, topicDetail, onClear, onOpenFund }) {
+  const fundMeta = detail?.fund;
+  const currentChange = Number.isFinite(fundMeta?.estimatedChange) ? fundMeta.estimatedChange : fund?.dayChange;
+  const chartPoints = (detail?.intraday || []).map((item) => ({ ...item, value: item.change }));
+  const currentPoint = chartPoints.at(-1);
+  const holdings = detail?.holdings || [];
+  return (
+    <section className="topic-detail-panel selected-fund-panel">
+      <article className="topic-chart-card">
+        <div className="topic-detail-head">
+          <div>
+            <span>{fundMeta?.code || fund.code}</span>
+            <h2>{fundMeta?.name || fund.name || fund.shortName}</h2>
+          </div>
+          <strong className={(currentChange || 0) >= 0 ? "up" : "down"}>{formatPercent(currentChange)}</strong>
+        </div>
+        <div className="topic-metrics">
+          <span>天天基金估值 <b>{formatPercent(currentChange)}</b></span>
+          <span>曲线当前点 <b>{formatPercent(currentPoint?.value)}</b></span>
+          <span>近 1 月 <b>{formatPercent(fundMeta?.month ?? fund.month)}</b></span>
+          <span>近 3 月 <b>{formatPercent(fundMeta?.quarter ?? fund.quarter)}</b></span>
+        </div>
+        {state === "loading" ? (
+          <div className="intraday-empty">正在加载基金实时走势...</div>
+        ) : (
+          <FundLineChart
+            points={chartPoints}
+            positive={(currentChange || 0) >= 0}
+            percent
+            labelMode="time"
+          />
+        )}
+        <p>
+          {detail?.trendGranularity === "previous_intraday"
+            ? `实时分时不可用时，自动回退为上一交易日走势（交易日 ${detail?.intradaySessionDate || "--"}）。`
+            : `顶部涨跌优先使用天天基金公开估值；曲线由重仓股分时聚合，仅作盘中方向参考（交易日 ${detail?.intradaySessionDate || "--"}）。`}
+          <button type="button" className="text-link-button" onClick={onClear}>返回主题走势</button>
+        </p>
+      </article>
+      <TopicFundComparison funds={topicDetail?.funds || []} onOpenFund={onOpenFund} />
+      {!!holdings.length && (
+        <article className="fund-holding-card inline-holdings">
+          <div className="section-heading">
+            <h2>重仓股票</h2>
+            <span>{detail?.holdingsQuarter ? `${detail.holdingsQuarter} 持仓` : "最近季度持仓"}</span>
+          </div>
+          <div className="fund-holding-head">
+            <span>股票</span>
+            <span>涨跌幅</span>
+            <span>持仓占比</span>
+          </div>
+          {holdings.slice(0, 8).map((item) => (
+            <div className="fund-holding-row" key={`${item.code}-${item.name}`}>
+              <div className="fund-holding-name">
+                <strong>{item.name}</strong>
+                <small>{item.code}</small>
+              </div>
+              <em className={(item.dayChange || 0) >= 0 ? "up" : "down"}>
+                {Number.isFinite(item.dayChange) ? formatPercent(item.dayChange) : "--"}
+              </em>
+              <span>{formatRatio(item.weight)}</span>
+            </div>
+          ))}
+        </article>
+      )}
+    </section>
+  );
+}
+
+function TopicDetailPanel({ detail, state, onOpenFund }) {
+  const topic = detail?.topic;
   if (state === "loading") {
     return <section className="topic-detail-panel loading">正在加载主题详情...</section>;
   }
@@ -882,35 +1973,21 @@ function TopicDetailPanel({ detail, state }) {
           <span>近 3 月 <b>{formatPercent(topic.quarter)}</b></span>
         </div>
         <IntradayLineChart points={detail.intraday} />
-        <p>当日走势由主题相关持仓股票分时等权聚合，仅用于观察主题盘中方向。</p>
+        <p>
+          {detail?.trendGranularity === "previous_intraday"
+            ? `\u5206\u65f6\u4e0d\u53ef\u7528\u65f6\uff0c\u81ea\u52a8\u56de\u9000\u4e3a\u4e0a\u4e00\u4e2a\u4ea4\u6613\u65e5\u7684\u4e3b\u9898\u5206\u65f6\u805a\u5408${detail?.intradaySessionDate ? `\uff08\u4ea4\u6613\u65e5 ${detail.intradaySessionDate}\uff09` : ""}\u3002`
+            : detail?.intradayFallback
+              ? "\u5f53\u524d\u5c55\u793a\u6700\u8fd1\u4e00\u6b21\u6210\u529f\u6293\u53d6\u7684\u4e3b\u9898\u5206\u65f6\u805a\u5408\uff0c\u7528\u4e8e\u907f\u514d\u4e0a\u6e38\u77ed\u65f6\u7f3a\u53e3\u5bfc\u81f4\u7a7a\u767d\u3002"
+              : `\u5f53\u65e5\u8d70\u52bf\u7531\u4e3b\u9898\u76f8\u5173\u6301\u4ed3\u80a1\u7968\u5206\u65f6\u7b49\u6743\u805a\u5408${detail?.intradaySessionDate ? `\uff08\u4ea4\u6613\u65e5 ${detail.intradaySessionDate}\uff09` : ""}\uff0c\u4ec5\u7528\u4e8e\u89c2\u5bdf\u4e3b\u9898\u76d8\u4e2d\u65b9\u5411\u3002`}
+        </p>
       </article>
-      <aside className="topic-fund-card">
-        <div className="section-heading">
-          <h2>主题基金比较</h2>
-          <div className="fund-sort-tabs" aria-label="主题基金排序">
-            <button className={fundSort === "day" ? "active" : ""} onClick={() => setFundSort("day")}>日</button>
-            <button className={fundSort === "week" ? "active" : ""} onClick={() => setFundSort("week")}>周</button>
-            <button className={fundSort === "month" ? "active" : ""} onClick={() => setFundSort("month")}>月</button>
-          </div>
-        </div>
-        <div className="topic-fund-list">
-          {funds.slice(0, 9).map((fund, index) => (
-            <div className="topic-fund-row" key={fund.code}>
-              <span className={index < 3 ? "hot-rank" : ""}>{String(index + 1).padStart(2, "0")}</span>
-              <strong>{fund.name}</strong>
-              <em className={(fund[fundSortConfig.key] || 0) >= 0 ? "up" : "down"}>{formatPercent(fund[fundSortConfig.key])}</em>
-              <b>{fundSortConfig.label}</b>
-            </div>
-          ))}
-        </div>
-      </aside>
+      <TopicFundComparison funds={detail?.funds || []} onOpenFund={onOpenFund} />
     </section>
   );
 }
 
 function SignalRow({ signal, selected, onSelect }) {
   const Icon = signal.icon;
-  const contribution = signal.score - previousScoreFor(signal);
   return (
     <button className={`signal-row ${selected ? "selected" : ""}`} onClick={onSelect}>
       <span className="signal-icon"><Icon size={18} /></span>
@@ -919,9 +1996,6 @@ function SignalRow({ signal, selected, onSelect }) {
         <small>{signal.detail}</small>
       </span>
       <span className={`signal-pill ${toneForScore(signal.score)}`}>{signal.value}</span>
-      <span className={`signal-contribution ${contribution >= 0 ? "up" : "down"}`}>
-        {contribution >= 0 ? "+" : ""}{contribution}
-      </span>
       <span className="signal-score">{signal.score}</span>
     </button>
   );
@@ -953,10 +2027,32 @@ function ContributionPanel({ signals }) {
   );
 }
 
+function CompositePopover({ signals, range }) {
+  const weight = signals.length ? 100 / signals.length : 0;
+  return (
+    <div className="composite-popover" role="dialog" aria-label="加权组成说明">
+      <p>
+        当前总分按 <strong>{signals.length || 0}</strong> 个市场信号等权平均计算，
+        当前口径为 <strong>{rangeMeta(range).shortLabel}</strong>。
+      </p>
+      <div className="composite-popover-list">
+        {signals.map((signal) => (
+          <div className="composite-popover-row" key={signal.name}>
+            <span>{signal.name}</span>
+            <em>{weight.toFixed(1)}%</em>
+            <strong>{signal.score}</strong>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [range, setRange] = useState("1D");
   const [candleRange, setCandleRange] = useState("daily");
   const [viewMode, setViewMode] = useState("market");
+  const [shanghaiNow, setShanghaiNow] = useState(() => new Date());
   const [selectedSignalName, setSelectedSignalName] = useState(fallbackSignals[0].name);
   const [marketModel, setMarketModel] = useState({
     snapshots: fallbackSnapshots,
@@ -976,8 +2072,22 @@ function App() {
   });
   const [fundState, setFundState] = useState("loading");
   const [fundCategories, setFundCategories] = useState([]);
+  const [fundCategoriesRefreshedAt, setFundCategoriesRefreshedAt] = useState(null);
   const [fundTopicState, setFundTopicState] = useState("loading");
   const [fundTopics, setFundTopics] = useState([]);
+  const [fundTopicsRefreshedAt, setFundTopicsRefreshedAt] = useState(null);
+  const [fundMarketRankingState, setFundMarketRankingState] = useState("loading");
+  const [fundMarketRankings, setFundMarketRankings] = useState(null);
+  const [showCompositePopover, setShowCompositePopover] = useState(false);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setShanghaiNow(new Date());
+    }, 1000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -999,33 +2109,38 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
-    fetchEastmoneySignals()
-      .then((payload) => {
-        if (cancelled) return;
-        if (!payload.configured) {
-          setEastmoneyState({ status: "error", message: "东方财富公开数据暂不可用" });
-          return;
-        }
-        if (!payload.signals.length) {
+    const loadEastmoneySignals = () => {
+      fetchEastmoneySignals()
+        .then((payload) => {
+          if (cancelled) return;
+          if (!payload.configured) {
+            setEastmoneyState({ status: "error", message: "东方财富公开数据暂不可用" });
+            return;
+          }
+          if (!payload.signals.length) {
+            setEastmoneyState({
+              status: "empty",
+              message: "东方财富补充信号暂缺，主信号仍按实时行情计算",
+            });
+            return;
+          }
+          setMarketModel((current) => mergeSignalsWithSnapshot(current, payload.signals));
           setEastmoneyState({
-            status: "empty",
-            message: "东方财富公开数据暂无可用信号",
+            status: "live",
+            message: `东方财富已接入 ${payload.signals.length} 个补充信号`,
           });
-          return;
-        }
-        setMarketModel((current) => mergeSignalsWithSnapshot(current, payload.signals));
-        setEastmoneyState({
-          status: "live",
-          message: `东方财富已接入 ${payload.signals.length} 个信号`,
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          console.warn(error);
+          setEastmoneyState({ status: "error", message: "东方财富公开数据暂不可用" });
         });
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        console.warn(error);
-        setEastmoneyState({ status: "error", message: "东方财富公开数据暂不可用" });
-      });
+    };
+    loadEastmoneySignals();
+    const timer = window.setInterval(loadEastmoneySignals, 30000);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
   }, []);
 
@@ -1057,39 +2172,81 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
-    fetchFundCategories()
-      .then((categories) => {
-        if (cancelled) return;
-        setFundCategories(categories);
-        setFundState(categories.length ? "live" : "empty");
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        console.warn(error);
-        setFundCategories([]);
-        setFundState("error");
-      });
+    const loadFundCategories = (initial = false) => {
+      if (initial) setFundState("loading");
+      fetchFundCategories()
+        .then((payload) => {
+          if (cancelled) return;
+          const categories = payload.categories || [];
+          setFundCategories(categories);
+          setFundCategoriesRefreshedAt(payload.refreshedAt || null);
+          setFundState(categories.length ? "live" : "empty");
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          console.warn(error);
+          setFundCategories([]);
+          setFundState("error");
+        });
+    };
+    loadFundCategories(true);
+    const timer = window.setInterval(() => loadFundCategories(false), 30000);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-    fetchFundTopics()
-      .then((topics) => {
-        if (cancelled) return;
-        setFundTopics(topics);
-        setFundTopicState(topics.length ? "live" : "empty");
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        console.warn(error);
-        setFundTopics([]);
-        setFundTopicState("error");
-      });
+    const loadFundTopics = (initial = false) => {
+      if (initial) setFundTopicState("loading");
+      fetchFundTopics()
+        .then((payload) => {
+          if (cancelled) return;
+          const topics = payload.topics || [];
+          setFundTopics(topics);
+          setFundTopicsRefreshedAt(payload.refreshedAt || null);
+          setFundTopicState(topics.length ? "live" : "empty");
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          console.warn(error);
+          setFundTopics([]);
+          setFundTopicState("error");
+        });
+    };
+    loadFundTopics(true);
+    const timer = window.setInterval(() => loadFundTopics(false), 30000);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadFundMarketRankings = (initial = false) => {
+      if (initial) setFundMarketRankingState("loading");
+      fetchFundMarketRankings()
+        .then((payload) => {
+          if (cancelled) return;
+          setFundMarketRankings(payload);
+          const hasRankings = (payload.gainers?.length || 0) + (payload.losers?.length || 0);
+          setFundMarketRankingState(hasRankings ? "live" : "empty");
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          console.warn(error);
+          setFundMarketRankings(null);
+          setFundMarketRankingState("error");
+        });
+    };
+    loadFundMarketRankings(true);
+    const timer = window.setInterval(() => loadFundMarketRankings(false), 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
     };
   }, []);
 
@@ -1114,12 +2271,35 @@ function App() {
   const selectedSignal = signalsForRange.find((signal) => signal.name === selectedSignalName) || signalsForRange[0];
   const tone = toneForScore(data.score);
   const candleConfig = candleRanges.find((item) => item.key === candleRange) || candleRanges[2];
+  const activeRange = rangeMeta(range);
+  const chinaClock = formatShanghaiClock(shanghaiNow);
+  const quoteCandles = (marketModel.candles[candleRange] || []).filter((item) => (
+    item
+    && Number.isFinite(item.open)
+    && Number.isFinite(item.high)
+    && Number.isFinite(item.low)
+    && Number.isFinite(item.close)
+  ));
+  const latestQuoteCandle = quoteCandles.at(-1) || null;
+  const previousQuoteCandle = quoteCandles.at(-2) || null;
+  const liveIndex = latestQuoteCandle?.close ?? marketModel.meta.close ?? null;
+  const liveChangePoints = latestQuoteCandle && previousQuoteCandle
+    ? latestQuoteCandle.close - previousQuoteCandle.close
+    : null;
+  const liveChangePercent = latestQuoteCandle && previousQuoteCandle && previousQuoteCandle.close
+    ? ((latestQuoteCandle.close - previousQuoteCandle.close) / previousQuoteCandle.close) * 100
+    : null;
+  const liveIndexDate = latestQuoteCandle
+    ? new Date(latestQuoteCandle.timestamp * 1000).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" })
+    : marketModel.meta.date;
 
   return (
     <main className="app-shell">
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark">M</span>
+          <span className="brand-mark" aria-hidden="true">
+            {viewMode === "market" ? <Gauge size={18} strokeWidth={2.3} /> : <BarChart3 size={18} strokeWidth={2.3} />}
+          </span>
           <span>{viewMode === "market" ? "中国恐惧与贪婪指数" : "基金主题榜"}</span>
         </div>
         {viewMode === "market" && (
@@ -1139,36 +2319,61 @@ function App() {
             <>
               <button aria-label="搜索"><Search size={17} /></button>
               <button aria-label="提醒"><Bell size={17} /></button>
-              <button className="date-button"><CalendarDays size={16} /> {marketModel.meta.date} <ChevronDown size={15} /></button>
+              <div className="date-display" aria-label="北京时间">
+                <CalendarDays size={16} />
+                <div>
+                  <strong>{chinaClock.dateLabel}</strong>
+                  <span>{chinaClock.timeLabel}</span>
+                </div>
+              </div>
             </>
           )}
         </div>
       </header>
 
       {viewMode === "funds" ? (
-        <FundOnlyPage topics={fundTopics} state={fundTopicState} onBack={() => setViewMode("market")} />
+        <FundOnlyPage
+          topics={fundTopics}
+          state={fundTopicState}
+          refreshedAt={fundTopicsRefreshedAt || fundCategoriesRefreshedAt}
+          marketRankings={fundMarketRankings}
+          marketRankingState={fundMarketRankingState}
+          onBack={() => setViewMode("market")}
+        />
       ) : (
         <>
 
       <section id="market" className="page-title">
         <div>
           <h1>上证综指情绪仪表盘</h1>
-          <p>
-            七个真实行情信号汇总为一个 A 股情绪读数。
-            {marketModel.meta.close ? ` 最新收盘：${marketModel.meta.close.toFixed(2)}。` : ""}
-          </p>
+          <p>七个真实行情信号汇总为一个 A 股情绪读数。</p>
           <div className="data-badges">
             <span>真实：上证综指价格 / OHLC / K 线</span>
             <span>信号：{signals.length} 个真实数据项</span>
             <span className={`source-status ${eastmoneyState.status}`}>{eastmoneyState.message}</span>
           </div>
         </div>
-        <div className="range-tabs" aria-label="时间范围">
-          {ranges.map((item) => (
-            <button key={item} className={range === item ? "active" : ""} onClick={() => setRange(item)}>
-              {item}
-            </button>
-          ))}
+        <div className="page-title-side">
+          <div className="live-index-card" aria-label="当前指数">
+            <small>{candleConfig.label}指数</small>
+            <strong>{Number.isFinite(liveIndex) ? liveIndex.toFixed(2) : "--"}</strong>
+            <div className="live-index-meta">
+              <span className={liveChangePoints != null && liveChangePoints >= 0 ? "up" : "down"}>
+                {liveChangePoints == null ? "--" : `${liveChangePoints >= 0 ? "+" : ""}${liveChangePoints.toFixed(2)}`}
+              </span>
+              <span className={liveChangePercent != null && liveChangePercent >= 0 ? "up" : "down"}>
+                {liveChangePercent == null ? "--" : formatPercent(liveChangePercent)}
+              </span>
+              <em>{liveIndexDate || "--"}</em>
+            </div>
+          </div>
+          <div className="range-tabs" aria-label="时间范围">
+            {rangeOptions.map((item) => (
+              <button key={item.key} className={range === item.key ? "active" : ""} onClick={() => setRange(item.key)}>
+                {item.shortLabel}
+              </button>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -1179,6 +2384,25 @@ function App() {
             <strong className={data.delta >= 0 ? "up" : "down"}>{data.delta >= 0 ? "+" : ""}{data.delta} 较上次</strong>
           </div>
           <GaugeDial score={data.score} label={data.label} />
+          <div className="gauge-insights">
+            <div className="gauge-insight-card">
+              <span>{activeRange.longLabel}变化</span>
+              <strong className={data.delta >= 0 ? "up" : "down"}>
+                {data.delta >= 0 ? "+" : ""}{data.delta}
+              </strong>
+              <small>{describeDelta(data.delta)}</small>
+            </div>
+            <div className="gauge-insight-card">
+              <span>{activeRange.longLabel}区间定位</span>
+              <MiniSentimentBand score={data.score} label={data.label} />
+              <small>当前读数落在 0 到 100 刻度中的位置</small>
+            </div>
+            <div className="gauge-insight-card">
+              <span>位置说明</span>
+              <strong>{selectedSignal.score}</strong>
+              <small>{selectedSignal.name}</small>
+            </div>
+          </div>
           <div className="score-strip">
             <div><span>上一读数</span><strong>{data.previous}</strong></div>
             <div><span>一周前</span><strong>{data.week}</strong></div>
@@ -1219,8 +2443,17 @@ function App() {
         <article id="signals" className="signals-panel">
           <div className="section-heading">
             <h2>市场信号</h2>
-            <span>加权组成</span>
+            <div className="section-heading-meta">
+              <button
+                type="button"
+                className={`ghost-info-button ${showCompositePopover ? "active" : ""}`}
+                onClick={() => setShowCompositePopover((current) => !current)}
+              >
+                加权组成
+              </button>
+            </div>
           </div>
+          {showCompositePopover && <CompositePopover signals={signalsForRange} range={range} />}
           <div className="signals-list">
             {signalsForRange.map((signal) => (
               <SignalRow
