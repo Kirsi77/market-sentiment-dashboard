@@ -487,6 +487,22 @@ async function fetchShanghaiCompositeModel() {
   };
 }
 
+function formatCandleDate(candle, options = { year: "numeric", month: "2-digit", day: "2-digit" }) {
+  if (!candle) return "--";
+  if (typeof candle.date === "string" && candle.date) {
+    const normalized = candle.date.includes("T") ? candle.date : `${candle.date}T00:00:00+08:00`;
+    const parsed = new Date(normalized);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toLocaleDateString("zh-CN", options);
+    }
+    return candle.date;
+  }
+  if (Number.isFinite(candle.timestamp)) {
+    return new Date(candle.timestamp * 1000).toLocaleDateString("zh-CN", options);
+  }
+  return "--";
+}
+
 async function fetchYahooShanghaiCompositeModel() {
   const response = await fetch("/api/yahoo/v8/finance/chart/000001.SS?range=1y&interval=1d");
   if (!response.ok) throw new Error(`Quote request failed: ${response.status}`);
@@ -689,7 +705,7 @@ function CandlestickChart({ candles, periodNote }) {
   const gridValues = [top, top - (top - bottom) / 3, top - ((top - bottom) * 2) / 3, bottom];
   const hoveredCandle = hoveredIndex == null ? null : safeCandles[hoveredIndex];
   const hoveredDate = hoveredCandle
-    ? new Date(hoveredCandle.timestamp * 1000).toLocaleDateString("zh-CN", {
+    ? formatCandleDate(hoveredCandle, {
         year: "numeric",
         month: "2-digit",
         day: "2-digit",
@@ -740,7 +756,7 @@ function CandlestickChart({ candles, periodNote }) {
           const bodyY = Math.min(openY, closeY);
           const bodyHeight = Math.max(3, Math.abs(closeY - openY));
           return (
-            <g key={`${item.timestamp}-${index}`} className={up ? "candle-up" : "candle-down"}>
+            <g key={`${item.date || item.timestamp || index}-${index}`} className={up ? "candle-up" : "candle-down"}>
               <line className="wick" x1={x} x2={x} y1={highY} y2={lowY} />
               <rect className="candle-body" x={x - bodyWidth / 2} y={bodyY} width={bodyWidth} height={bodyHeight} rx="2" />
               <rect
@@ -2538,7 +2554,7 @@ function App() {
   const liveIndexDate = liveQuote?.date
     ? new Date(`${liveQuote.date}T00:00:00+08:00`).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" })
     : latestQuoteCandle
-    ? new Date(latestQuoteCandle.timestamp * 1000).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" })
+    ? formatCandleDate(latestQuoteCandle, { month: "2-digit", day: "2-digit" })
     : marketModel.meta.date;
 
   return (
