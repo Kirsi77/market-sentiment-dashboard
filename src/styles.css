@@ -1433,6 +1433,83 @@ button {
   font-weight: 860;
 }
 
+.fund-ranking-preview {
+  max-width: 760px;
+  margin-top: 26px;
+  padding: 18px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 18px 36px rgba(17, 24, 39, 0.06);
+}
+
+.fund-ranking-preview.empty {
+  color: var(--muted);
+}
+
+.fund-ranking-preview.empty strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--ink);
+  font-size: 22px;
+}
+
+.fund-ranking-preview-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.fund-ranking-preview-head span {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.fund-ranking-preview-head strong {
+  display: block;
+  color: var(--ink);
+  font-size: 26px;
+  line-height: 1.05;
+  font-weight: 900;
+}
+
+.fund-ranking-preview-head em {
+  flex: 0 0 auto;
+  font-size: 30px;
+  line-height: 1;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.fund-ranking-preview-head em.up {
+  color: var(--red);
+}
+
+.fund-ranking-preview-head em.down {
+  color: var(--green);
+}
+
+.fund-ranking-preview-chart {
+  margin-top: 10px;
+  border: 1px solid #e4ebf2;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fbfcfd 0%, #fff 100%);
+}
+
+.fund-ranking-preview-chart .intraday-chart {
+  height: 210px;
+  margin-top: 0;
+}
+
+.fund-ranking-preview-chart .intraday-empty {
+  height: 210px;
+  border: 0;
+}
+
 .strength-explainer {
   display: grid;
   grid-template-columns: 86px minmax(0, 1fr);
@@ -1542,12 +1619,28 @@ button {
   grid-template-columns: 24px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
+  width: 100%;
   min-height: 30px;
   border-top: 1px solid #eef2f6;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
 }
 
 .top-fund-mover-row:first-of-type {
   border-top: 0;
+}
+
+.top-fund-mover-row:hover,
+.top-fund-mover-row.selected {
+  background: #f8fafc;
+}
+
+.top-fund-mover-row.selected {
+  box-shadow: inset 3px 0 0 var(--red);
 }
 
 .top-fund-mover-row b {
@@ -2491,6 +2584,14 @@ button {
 
 .fund-rank-row strong {
   font-size: 21px;
+}
+
+.fund-rank-row strong small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .fund-rank-row em {

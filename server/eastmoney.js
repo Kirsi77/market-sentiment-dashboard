@@ -86,6 +86,124 @@ function stripHtml(value) {
     .trim();
 }
 
+const CURATED_FUND_THEME_GROUPS = [
+  { name: "半导体材料", aliases: ["半导体材料", "半导体设备", "芯片材料"] },
+  { name: "电力", aliases: ["电力", "绿色电力", "火电", "水电"] },
+  { name: "半导体", aliases: ["半导体", "第三代半导体", "芯片"] },
+  { name: "消费电子", aliases: ["消费电子", "苹果概念", "智能穿戴"] },
+  { name: "电子", aliases: ["电子", "电子元件", "PCB"] },
+  { name: "电网设备", aliases: ["电网设备", "智能电网", "特高压"] },
+  { name: "脑机接口", aliases: ["脑机接口"] },
+  { name: "AI应用", aliases: ["AI应用", "AIGC", "ChatGPT概念"] },
+  { name: "存储芯片", aliases: ["存储芯片", "存储器"] },
+  { name: "算力租赁", aliases: ["算力租赁", "东数西算", "数据中心"] },
+  { name: "传媒", aliases: ["传媒", "文化传媒", "影视"] },
+  { name: "软件", aliases: ["软件", "国产软件", "信创"] },
+  { name: "动漫游戏", aliases: ["动漫游戏", "游戏"] },
+  { name: "AI医疗", aliases: ["AI医疗", "医疗信息化"] },
+  { name: "人工智能", aliases: ["人工智能", "机器人概念"] },
+  { name: "智能家居", aliases: ["智能家居", "智能家电"] },
+  { name: "金融科技", aliases: ["金融科技", "数字货币", "互联网金融"] },
+  { name: "机器人", aliases: ["机器人", "人形机器人", "工业机器人"] },
+  { name: "低空经济", aliases: ["低空经济", "飞行汽车"] },
+  { name: "储能", aliases: ["储能", "抽水蓄能"] },
+  { name: "CPO", aliases: ["CPO", "光通信模块"] },
+  { name: "可控核聚变", aliases: ["可控核聚变", "核电"] },
+  { name: "光伏", aliases: ["光伏", "HJT电池", "TOPCon电池"] },
+  { name: "云计算", aliases: ["云计算", "数据要素"] },
+  { name: "国企改革", aliases: ["国企改革", "中特估", "中字头"] },
+  { name: "证券", aliases: ["证券", "券商"] },
+  { name: "商业航天", aliases: ["商业航天", "卫星导航", "军民融合"] },
+  { name: "交通运输", aliases: ["交通运输", "物流"] },
+  { name: "通信技术", aliases: ["通信技术", "通信设备"] },
+  { name: "计算机", aliases: ["计算机", "IT服务"] },
+  { name: "环保", aliases: ["环保", "固废处理", "污水处理"] },
+  { name: "房地产", aliases: ["房地产", "物业管理"] },
+  { name: "信创", aliases: ["信创", "国产操作系统"] },
+  { name: "汽车", aliases: ["汽车", "汽车零部件", "汽车热管理"] },
+  { name: "医疗", aliases: ["医疗", "医疗器械", "医疗服务"] },
+  { name: "红利低波", aliases: ["红利低波", "红利"] },
+  { name: "基建", aliases: ["基建", "工程建设", "建筑工程"] },
+  { name: "证券保险", aliases: ["证券保险", "保险", "券商"] },
+  { name: "固态电池", aliases: ["固态电池", "动力电池"] },
+  { name: "中药", aliases: ["中药"] },
+  { name: "微盘股", aliases: ["微盘股", "小盘股"] },
+  { name: "机械设备", aliases: ["机械设备", "通用设备", "专用设备"] },
+  { name: "体育", aliases: ["体育", "体育产业"] },
+  { name: "港股红利", aliases: ["港股红利", "恒生红利"] },
+  { name: "创新药", aliases: ["创新药", "CRO"] },
+  { name: "银行", aliases: ["银行"] },
+  { name: "5G通信", aliases: ["5G通信", "5G概念"] },
+  { name: "医药", aliases: ["医药", "生物医药"] },
+  { name: "白酒", aliases: ["白酒", "酿酒行业"] },
+  { name: "畜牧养殖", aliases: ["畜牧养殖", "猪肉概念", "鸡肉概念"] },
+  { name: "红利", aliases: ["红利", "高股息"] },
+  { name: "军工", aliases: ["军工", "航天航空"] },
+  { name: "食品饮料", aliases: ["食品饮料", "饮料制造"] },
+  { name: "建材", aliases: ["建材", "水泥建材"] },
+  { name: "新能源", aliases: ["新能源", "风电设备"] },
+  { name: "港股科技", aliases: ["港股科技", "恒生科技"] },
+  { name: "保险", aliases: ["保险"] },
+  { name: "港股消费", aliases: ["港股消费"] },
+  { name: "钢铁", aliases: ["钢铁"] },
+  { name: "农业", aliases: ["农业", "农牧饲渔"] },
+  { name: "煤炭", aliases: ["煤炭", "煤炭行业"] },
+  { name: "家电", aliases: ["家电", "家用电器"] },
+  { name: "港股创新药", aliases: ["港股创新药"] },
+  { name: "黄金", aliases: ["黄金", "贵金属"] },
+  { name: "港股医药", aliases: ["港股医药"] },
+  { name: "新能源车", aliases: ["新能源车", "新能源汽车"] },
+  { name: "锂电池", aliases: ["锂电池", "锂电"] },
+  { name: "贵金属", aliases: ["贵金属", "黄金概念"] },
+  { name: "化工", aliases: ["化工", "化学制品", "化工原料"] },
+  { name: "有色金属", aliases: ["有色金属", "小金属"] },
+  { name: "稀土", aliases: ["稀土", "稀土永磁"] },
+  { name: "锂矿", aliases: ["锂矿", "盐湖提锂"] },
+];
+
+function normalizeThemeName(value) {
+  return String(value || "").replace(/\s/g, "").toLowerCase();
+}
+
+function curateFundTopics(topics) {
+  const usedCodes = new Set();
+  const normalizedTopics = topics.map((topic) => ({
+    topic,
+    normalized: normalizeThemeName(topic.name),
+  }));
+
+  return CURATED_FUND_THEME_GROUPS.flatMap((group) => {
+    const aliases = [group.name, ...(group.aliases || [])].map(normalizeThemeName);
+    const candidates = normalizedTopics
+      .filter(({ topic, normalized }) => (
+        !usedCodes.has(topic.code)
+        && aliases.some((alias) => normalized === alias || normalized.includes(alias))
+      ))
+      .map(({ topic, normalized }) => {
+        const exact = aliases.includes(normalized) ? 2 : 0;
+        const starts = aliases.some((alias) => normalized.startsWith(alias)) ? 1 : 0;
+        return { topic, score: exact + starts + (topic.strength || 0) / 100 + Math.max(0, topic.dayChange || 0) / 20 };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    if (!candidates.length) return [];
+    const representative = candidates[0].topic;
+    usedCodes.add(representative.code);
+    return [{
+      ...representative,
+      name: group.name,
+      sourceName: representative.name,
+      sourceTopics: candidates.slice(0, 6).map(({ topic }) => ({
+        code: topic.code,
+        name: topic.name,
+        dayChange: topic.dayChange,
+        strength: topic.strength,
+      })),
+      childCount: candidates.length,
+    }];
+  });
+}
+
 function quarterMonthFromDate(dateText) {
   const date = new Date(`${dateText}T00:00:00+08:00`);
   const month = date.getUTCMonth() + 1;
@@ -534,7 +652,9 @@ export async function buildFundTopics() {
     const chunk = selected.slice(index, index + concurrency);
     results.push(...await Promise.allSettled(chunk.map(fetchFundTopicDetail)));
   }
-  return results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+  const allTopics = results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+  const curatedTopics = curateFundTopics(allTopics);
+  return curatedTopics.length ? curatedTopics : allTopics;
 }
 
 async function fetchTopicFunds(topicCode) {

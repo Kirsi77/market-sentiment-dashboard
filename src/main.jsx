@@ -1207,6 +1207,7 @@ function FundOnlyPage({ topics, state, refreshedAt, marketRankings, marketRankin
   const [topicDetail, setTopicDetail] = useState(null);
   const [topicDetailState, setTopicDetailState] = useState("idle");
   const [selectedFund, setSelectedFund] = useState(null);
+  const [selectedRankingFund, setSelectedRankingFund] = useState(null);
   const [fundDetail, setFundDetail] = useState(null);
   const [fundDetailState, setFundDetailState] = useState("idle");
   const pageTopRef = useRef(null);
@@ -1329,12 +1330,21 @@ function FundOnlyPage({ topics, state, refreshedAt, marketRankings, marketRankin
       <div className="fund-only-title">
         <div>
           <h1>基金主题细分榜</h1>
-          <p>更新于 {updated}，按主题强度或实时涨跌排序。</p>
-          <TopicHeroSummary topics={sorted} activeTopic={activeTopic} />
+          <p>更新于 {updated}，精选主题展示，底层仍使用东方财富公开主题数据。</p>
+          <FundRankingPreview
+            rankings={marketRankings}
+            state={marketRankingState}
+            selectedFund={selectedRankingFund}
+          />
         </div>
         <div className="fund-title-aside">
           <StrengthExplainer topic={activeTopic} />
-          <MarketFundRankingCard rankings={marketRankings} state={marketRankingState} />
+          <MarketFundRankingCard
+            rankings={marketRankings}
+            state={marketRankingState}
+            selectedFundCode={selectedRankingFund?.code}
+            onSelectFund={setSelectedRankingFund}
+          />
         </div>
       </div>
       <div className="fund-rank-tabs" aria-label="基金榜单排序">
@@ -1391,7 +1401,14 @@ function FundOnlyPage({ topics, state, refreshedAt, marketRankings, marketRankin
             }}
           >
             <span className={index < 3 ? "hot-rank" : ""}>{String(index + 1).padStart(2, "0")}</span>
-            <strong>{item.name}</strong>
+            <strong>
+              {item.name}
+              {item.sourceName && item.sourceName !== item.name ? (
+                <small>映射自 {item.sourceName}{item.childCount > 1 ? ` 等 ${item.childCount} 个主题` : ""}</small>
+              ) : item.childCount > 1 ? (
+                <small>合并 {item.childCount} 个相关主题</small>
+              ) : null}
+            </strong>
             <em className={(item.dayChange || 0) >= 0 ? "up" : "down"}>{formatPercent(item.dayChange)}</em>
             <b>{Number.isFinite(item.strength) ? item.strength.toFixed(1) : "--"}</b>
             <span>{formatPercent(item.month)}</span>
@@ -1465,7 +1482,113 @@ function TopicHeroSummary({ topics, activeTopic }) {
   );
 }
 
-function MarketFundRankingCard({ rankings, state }) {
+function FundRankingPreview({ rankings, state, selectedFund }) {
+  const rows = (rankings?.gainers || []).slice(0, 10);
+  const rowSignature = rows.map((item) => `${item.code}:${item.dayChange}`).join("|");
+  const leadFund = rows[0] || null;
+  const [previewFund, setPreviewFund] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [detailState, setDetailState] = useState("idle");
+
+  useEffect(() => {
+    if (!rows.length) {
+      setPreviewFund(null);
+      setDetail(null);
+      setDetailState(state === "live" ? "empty" : "loading");
+      return undefined;
+    }
+    let cancelled = false;
+    const loadLeadFund = async (initial = false) => {
+      if (initial) setDetailState("loading");
+      try {
+        if (selectedFund?.code) {
+          const payload = await fetchFundDetail(selectedFund.code);
+          if (cancelled) return;
+          setPreviewFund(selectedFund);
+          setDetail(payload);
+          setDetailState("live");
+          return;
+        }
+        let fallback = null;
+        for (const fund of rows) {
+          const payload = await fetchFundDetail(fund.code);
+          if (cancelled) return;
+          if (!fallback) fallback = { fund, payload };
+          if ((payload.intraday || []).length) {
+            setPreviewFund(fund);
+            setDetail(payload);
+            setDetailState("live");
+            return;
+          }
+        }
+        if (fallback) {
+          setPreviewFund(fallback.fund);
+          setDetail(fallback.payload);
+          setDetailState("live");
+        } else {
+          setPreviewFund(rows[0] || null);
+          setDetail(null);
+          setDetailState("empty");
+        }
+      } catch (error) {
+        if (cancelled) return;
+        console.warn(error);
+        setPreviewFund(rows[0] || null);
+        setDetail(null);
+        setDetailState("error");
+      }
+    };
+    loadLeadFund(true);
+    const timer = window.setInterval(() => loadLeadFund(false), 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [rowSignature, selectedFund?.code, state]);
+
+  if (!leadFund) {
+    return (
+      <div className="fund-ranking-preview empty">
+        <span>基金排行走势</span>
+        <strong>{state === "live" ? "暂无可展示基金" : "正在加载公开排行"}</strong>
+      </div>
+    );
+  }
+
+  const chartPoints = (detail?.intraday || []).map((item) => ({ ...item, value: item.change }));
+  const displayFund = previewFund || leadFund;
+  const displayChange = Number.isFinite(detail?.estimate?.change)
+    ? detail.estimate.change
+    : displayFund.dayChange;
+
+  return (
+    <div className="fund-ranking-preview">
+      <div className="fund-ranking-preview-head">
+        <div>
+          <span>{displayFund.code === leadFund.code ? "全市场涨幅榜首走势" : "涨幅前十走势预览"}</span>
+          <strong>{detail?.name || displayFund.name}</strong>
+        </div>
+        <em className={(displayChange || 0) >= 0 ? "up" : "down"}>{formatPercent(displayChange)}</em>
+      </div>
+      <div className="fund-ranking-preview-chart">
+        {detailState === "live" && chartPoints.length ? (
+          <FundLineChart
+            points={chartPoints}
+            positive={(displayChange || 0) >= 0}
+            percent
+            labelMode="time"
+          />
+        ) : (
+          <div className="intraday-empty">
+            {detailState === "error" ? "走势暂时不可用" : "正在加载基金实时走势..."}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MarketFundRankingCard({ rankings, state, selectedFundCode, onSelectFund }) {
   const [mode, setMode] = useState("gainers");
   const tabs = [
     { key: "gainers", label: "涨幅前十", metric: "日涨幅" },
@@ -1501,11 +1624,16 @@ function MarketFundRankingCard({ rankings, state }) {
         <span>{dataDate}</span>
       </div>
       {rows.length ? rows.map((fund, index) => (
-        <div className="top-fund-mover-row" key={fund.code}>
+        <button
+          type="button"
+          className={`top-fund-mover-row ${selectedFundCode === fund.code ? "selected" : ""}`}
+          key={fund.code}
+          onClick={() => onSelectFund?.(fund)}
+        >
           <b>{String(index + 1).padStart(2, "0")}</b>
           <strong>{fund.name}</strong>
           <em className={(fund.dayChange || 0) >= 0 ? "up" : "down"}>{formatPercent(fund.dayChange)}</em>
-        </div>
+        </button>
       )) : (
         <div className="top-fund-mover-empty">
           {unavailableText || "暂无可用全市场基金排行。"}
