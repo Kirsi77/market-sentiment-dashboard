@@ -1409,9 +1409,10 @@ function FundOnlyPage({ topics, state, refreshedAt, marketRankings, marketRankin
             key={item.code}
             onClick={() => {
               setFollowTopTopic(false);
+              setSelectedFund(null);
               setSelectedTopicCode(item.code);
-              const targetTop = pageTopRef.current
-                ? pageTopRef.current.getBoundingClientRect().top + window.scrollY - 16
+              const targetTop = detailPanelRef.current
+                ? detailPanelRef.current.getBoundingClientRect().top + window.scrollY - 18
                 : 0;
               window.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" });
             }}
